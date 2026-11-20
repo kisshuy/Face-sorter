@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Gom Ảnh, Crop Mặt & Enhance (iPhone)</title>
+  <title>Crop Collage, Gom Nhóm Độc Quyền & Enhance (iPhone)</title>
   <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
   <style>
     * { box-sizing: border-box; }
@@ -39,7 +39,6 @@
       cursor: pointer;
     }
     button.secondary { background: #e5e7eb; color: #222; }
-    button.warn { background: #ff9500; color: #fff; }
     button:disabled { background: #b5b5b5; color: #fff; cursor: not-allowed; }
     select {
       padding: 7px 8px;
@@ -71,8 +70,8 @@
       flex-wrap: wrap;
     }
     .avatar {
-      width: 46px;
-      height: 46px;
+      width: 48px;
+      height: 48px;
       border-radius: 50%;
       object-fit: cover;
       border: 2px solid #007aff;
@@ -98,7 +97,7 @@
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
       gap: 8px;
     }
     .tile {
@@ -126,12 +125,6 @@
       border-radius: 4px;
       pointer-events: none;
     }
-    .cropped-box {
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px dashed #ddd;
-    }
-    .cropped-title { font-size: 12px; font-weight: 600; color: #444; margin-bottom: 6px; }
     #modal {
       display: none;
       position: fixed;
@@ -167,8 +160,8 @@
 </head>
 <body>
 
-  <h1>Gom Mặt, Crop Collage & Enhance (iPhone)</h1>
-  <p class="sub">Chạy local trên trình duyệt. Hỗ trợ gộp nhóm thủ công, tách từng mặt từ ảnh/collage và sharpen/enhance theo reference.</p>
+  <h1>Tự Động Crop Collage & Gom Mặt Độc Quyền</h1>
+  <p class="sub">Tự tách riêng từng khuôn mặt trước khi gom • Chỉ hiển thị mặt đã crop • Mỗi mặt chỉ thuộc duy nhất 1 người.</p>
 
   <div class="card">
     <input type="file" id="fileInput" accept="image/*" multiple />
@@ -178,9 +171,9 @@
       <button id="startBtn" disabled>Đang tải AI...</button>
     </div>
     <div class="hint">
-      • <b>Gộp thủ công:</b> Chọn nhóm đích ở từng group rồi bấm <b>Gộp vào</b>.<br/>
-      • <b>Crop collage:</b> Bấm vào ảnh (hoặc nút <b>Crop mặt</b> trong modal) để tách riêng từng khuôn mặt.<br/>
-      • <b>Enhance theo reference:</b> Sharpen/contrast + cân chỉnh nhẹ theo ảnh mặt sắc nét nhất (score cao nhất) của nhóm. Mặt mờ nặng trên browser chỉ cải thiện mức vừa phải, không thay thế AI restoration (CodeFormer/GFPGAN).
+      • Tự động phát hiện & cắt riêng từng khuôn mặt trong ảnh gốc/collage ngay lúc quét (ẩn toàn bộ ảnh collage gốc).<br/>
+      • Mỗi khuôn mặt đã crop được gắn ID duy nhất và khóa độc quyền vào đúng 1 nhóm người (không bao giờ lặp sang người khác).<br/>
+      • Bấm vào từng khuôn mặt để <b>Enhance theo reference</b> của nhóm hoặc tải về.
     </div>
     <div id="status">Đang tải mô hình SSD MobileNetV1...</div>
   </div>
@@ -191,9 +184,8 @@
     <img id="modalImg" src="" alt="" onclick="event.stopPropagation()" />
     <div id="modalNote" class="modal-note" onclick="event.stopPropagation()"></div>
     <div class="actions" onclick="event.stopPropagation()">
-      <button id="cropFacesBtn" class="warn">Crop từng mặt (Collage)</button>
       <button id="enhanceFaceBtn">Enhance theo Ref</button>
-      <a id="downloadLink" download="face_output.jpg"><button class="secondary">Tải ảnh</button></a>
+      <a id="downloadLink" download="cropped_face.jpg"><button class="secondary">Tải mặt này</button></a>
       <button class="secondary" onclick="closeModal()">Đóng</button>
     </div>
   </div>
@@ -211,17 +203,16 @@
     const modalImg = document.getElementById('modalImg');
     const modalNote = document.getElementById('modalNote');
     const downloadLink = document.getElementById('downloadLink');
-    const cropFacesBtn = document.getElementById('cropFacesBtn');
     const enhanceFaceBtn = document.getElementById('enhanceFaceBtn');
 
-    let extractedFaces = [];
+    // Danh sách các khuôn mặt ĐÃ ĐƯỢC CROP RIÊNG LẺ (không lưu/hiển thị ảnh collage gốc)
+    let croppedFacePool = [];
     let clusters = [];
-    let noFaceItems = [];
-    let activeModalCtx = null; // { groupIdx, photoUrl, fileName }
+    let activeModalCtx = null; // { groupIdx, faceId }
 
     thresholdInput.addEventListener('input', () => {
       thVal.textContent = parseFloat(thresholdInput.value).toFixed(2);
-      if (extractedFaces.length > 0) buildAndRenderClusters();
+      if (croppedFacePool.length > 0) buildExclusiveClusters();
     });
 
     function setStatus(msg, isErr = false) {
@@ -236,20 +227,19 @@
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
           faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
         ]);
-        setStatus('AI sẵn sàng! Chọn ảnh hoặc ảnh collage từ thư viện.');
-        startBtn.textContent = 'Bắt đầu quét';
+        setStatus('AI sẵn sàng! Chọn ảnh hoặc collage để tự động crop & gom mặt.');
+        startBtn.textContent = 'Bắt đầu crop & gom mặt';
         startBtn.disabled = false;
       } catch (e) {
-        setStatus('Lỗi tải model AI. Kiểm tra mạng và tải lại.', true);
+        setStatus('Lỗi tải model AI. Kiểm tra mạng và tải lại trang.', true);
       }
     });
 
-    function loadImageResized(fileOrUrl, maxSize = 1280) {
+    // Đọc ảnh tạm vào canvas để dò mặt và crop, sau đó giải phóng ngay ảnh gốc
+    function loadImageToCanvas(file, maxSize = 1600) {
       return new Promise((resolve, reject) => {
-        const isBlobUrl = typeof fileOrUrl === 'string';
-        const url = isBlobUrl ? fileOrUrl : URL.createObjectURL(fileOrUrl);
+        const url = URL.createObjectURL(file);
         const img = new Image();
-        img.crossOrigin = 'anonymous';
         img.onload = () => {
           let { width, height } = img;
           if (width > maxSize || height > maxSize) {
@@ -266,25 +256,34 @@
           canvas.height = height;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(img, 0, 0, width, height);
-          resolve({ canvas, url, img });
+          URL.revokeObjectURL(url); // Giải phóng ngay ảnh gốc/collage khỏi bộ nhớ
+          resolve(canvas);
         };
-        img.onerror = reject;
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error('Không đọc được ảnh'));
+        };
         img.src = url;
       });
     }
 
-    function cropFaceDataUrl(canvas, box, size = 160, padRatio = 0.25) {
-      const pad = Math.round(Math.max(box.width, box.height) * padRatio);
-      const x = Math.max(0, Math.round(box.x - pad));
-      const y = Math.max(0, Math.round(box.y - pad));
-      const w = Math.min(canvas.width - x, Math.round(box.width + pad * 2));
-      const h = Math.min(canvas.height - y, Math.round(box.height + pad * 2));
+    // Cắt riêng từng khuôn mặt với padding thoáng (30%) để giữ đủ tóc/cằm
+    function cropSingleFace(sourceCanvas, box, outSize = 256, padRatio = 0.30) {
+      const padX = Math.round(box.width * padRatio);
+      const padY = Math.round(box.height * padRatio);
+      const x = Math.max(0, Math.round(box.x - padX));
+      const y = Math.max(0, Math.round(box.y - padY));
+      const w = Math.min(sourceCanvas.width - x, Math.round(box.width + padX * 2));
+      const h = Math.min(sourceCanvas.height - y, Math.round(box.height + padY * 2));
 
       const faceCanvas = document.createElement('canvas');
-      faceCanvas.width = size;
-      faceCanvas.height = size;
-      faceCanvas.getContext('2d').drawImage(canvas, x, y, w, h, 0, 0, size, size);
-      return faceCanvas.toDataURL('image/jpeg', 0.9);
+      faceCanvas.width = outSize;
+      faceCanvas.height = outSize;
+      faceCanvas.getContext('2d').drawImage(sourceCanvas, x, y, w, h, 0, 0, outSize, outSize);
+      const dataUrl = faceCanvas.toDataURL('image/jpeg', 0.92);
+      faceCanvas.width = 0;
+      faceCanvas.height = 0;
+      return dataUrl;
     }
 
     function computeCentroid(descriptors) {
@@ -297,6 +296,7 @@
       return avg;
     }
 
+    // BƯỚC 1: Crop toàn bộ từng khuôn mặt trong tất cả ảnh/collage trước
     startBtn.addEventListener('click', async () => {
       const files = Array.from(fileInput.files || []);
       if (!files.length) {
@@ -305,78 +305,81 @@
       }
 
       startBtn.disabled = true;
-      extractedFaces = [];
+      croppedFacePool = [];
+      clusters = [];
       resultsEl.innerHTML = '';
 
-      const detectorOptions = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.55 });
+      // Dùng minConfidence 0.50 để bắt được cả các ô nhỏ trong ảnh collage
+      const detectorOptions = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.50 });
+      let uniqueFaceCounter = 0;
 
       for (let i = 0; i < files.length; i++) {
-        setStatus(`Đang phân tích ảnh ${i + 1} / ${files.length}...`);
+        setStatus(`Đang tách khuôn mặt từ ảnh ${i + 1} / ${files.length}...`);
         await new Promise(r => setTimeout(r, 15));
 
         try {
-          const { canvas, url } = await loadImageResized(files[i], 1280);
+          const canvas = await loadImageToCanvas(files[i], 1600);
           const detections = await faceapi
             .detectAllFaces(canvas, detectorOptions)
             .withFaceLandmarks()
             .withFaceDescriptors();
 
+          // Lọc bỏ nhiễu quá nhỏ (< 40px)
           const validDetections = detections.filter(
-            d => d.detection.box.width >= 45 && d.detection.box.height >= 45
+            d => d.detection.box.width >= 40 && d.detection.box.height >= 40
           );
 
-          if (validDetections.length === 0) {
-            extractedFaces.push({
-              descriptor: null,
-              score: 0,
-              photoUrl: url,
-              fileName: files[i].name,
-              avatar: null
+          const baseName = files[i].name.replace(/\.[^.]+$/, '');
+          validDetections.forEach((det, idx) => {
+            uniqueFaceCounter++;
+            const croppedUrl = cropSingleFace(canvas, det.detection.box, 256, 0.30);
+            croppedFacePool.push({
+              faceId: `face_${uniqueFaceCounter}`,
+              descriptor: det.descriptor,
+              score: det.detection.score,
+              croppedUrl: croppedUrl,
+              fileName: `${baseName}_mat${idx + 1}.jpg`
             });
-          } else {
-            validDetections.forEach((det, idx) => {
-              extractedFaces.push({
-                descriptor: det.descriptor,
-                score: det.detection.score,
-                photoUrl: url,
-                fileName: `${files[i].name}${validDetections.length > 1 ? '_face' + (idx + 1) : ''}`,
-                avatar: cropFaceDataUrl(canvas, det.detection.box, 128, 0.22)
-              });
-            });
-          }
+          });
 
+          // Xóa canvas ảnh collage gốc ngay lập tức
           canvas.width = 0;
           canvas.height = 0;
         } catch (err) {
-          console.warn('Bỏ qua ảnh lỗi:', files[i].name, err);
+          console.warn('Bỏ qua file lỗi:', files[i].name, err);
         }
       }
 
-      buildAndRenderClusters();
-      startBtn.disabled = false;
-      setStatus(`Hoàn tất! Quét xong ${files.length} ảnh.`);
-    });
-
-    function buildAndRenderClusters() {
-      const threshold = parseFloat(thresholdInput.value);
-      clusters = [];
-      noFaceItems = [];
-
-      const faceItems = extractedFaces
-        .filter(x => x.descriptor !== null)
-        .sort((a, b) => b.score - a.score);
-
-      for (const item of extractedFaces) {
-        if (!item.descriptor) noFaceItems.push(item);
+      if (croppedFacePool.length === 0) {
+        setStatus('Không tìm thấy khuôn mặt nào rõ nét trong các ảnh đã chọn.', true);
+        startBtn.disabled = false;
+        return;
       }
 
-      for (const item of faceItems) {
+      setStatus(`Đã crop xong ${croppedFacePool.length} khuôn mặt. Đang gom nhóm độc quyền...`);
+      buildExclusiveClusters();
+      startBtn.disabled = false;
+      setStatus(`Hoàn tất! Đã tách & gom ${croppedFacePool.length} khuôn mặt vào ${clusters.length} người.`);
+    });
+
+    // BƯỚC 2: Gom nhóm độc quyền (1 faceId chỉ thuộc duy nhất 1 người)
+    function buildExclusiveClusters() {
+      const threshold = parseFloat(thresholdInput.value);
+      clusters = [];
+      const assignedFaceIds = new Set(); // Khóa chặt: mặt đã gán cho người này thì KHÔNG BAO GIỜ gán cho người khác
+
+      // Ưu tiên mặt rõ nét nhất (score cao nhất) làm tâm chuẩn trước
+      const sortedFaces = [...croppedFacePool].sort((a, b) => b.score - a.score);
+
+      for (const face of sortedFaces) {
+        if (assignedFaceIds.has(face.faceId)) continue;
+
         let bestCluster = null;
         let minDist = threshold;
 
         for (const c of clusters) {
-          const distCentroid = faceapi.euclideanDistance(item.descriptor, c.centroid);
-          const distAnchor = faceapi.euclideanDistance(item.descriptor, c.descriptors[0]);
+          const distCentroid = faceapi.euclideanDistance(face.descriptor, c.centroid);
+          const distAnchor = faceapi.euclideanDistance(face.descriptor, c.descriptors[0]);
           const dist = Math.max(distCentroid, distAnchor * 0.95);
           if (dist < minDist) {
             minDist = dist;
@@ -385,30 +388,29 @@
         }
 
         if (bestCluster) {
-          if (!bestCluster.items.some(x => x.photoUrl === item.photoUrl && x.fileName === item.fileName)) {
-            bestCluster.items.push(item);
-          }
-          bestCluster.descriptors.push(item.descriptor);
+          assignedFaceIds.add(face.faceId);
+          bestCluster.faces.push(face);
+          bestCluster.descriptors.push(face.descriptor);
           bestCluster.centroid = computeCentroid(bestCluster.descriptors);
-          if (item.score > bestCluster.bestScore) {
-            bestCluster.bestScore = item.score;
-            bestCluster.refAvatar = item.avatar;
+          if (face.score > bestCluster.bestScore) {
+            bestCluster.bestScore = face.score;
+            bestCluster.refUrl = face.croppedUrl;
           }
         } else {
+          assignedFaceIds.add(face.faceId);
           clusters.push({
             name: `Người ${clusters.length + 1}`,
-            avatar: item.avatar,
-            refAvatar: item.avatar,
-            bestScore: item.score,
-            descriptors: [item.descriptor],
-            centroid: item.descriptor,
-            items: [item],
-            croppedFaces: []
+            refUrl: face.croppedUrl,
+            bestScore: face.score,
+            descriptors: [face.descriptor],
+            centroid: face.descriptor,
+            faces: [face]
           });
         }
       }
 
-      clusters.sort((a, b) => b.items.length - a.items.length);
+      // Sắp xếp nhóm nhiều ảnh lên đầu và đánh lại tên mặc định
+      clusters.sort((a, b) => b.faces.length - a.faces.length);
       clusters.forEach((c, idx) => {
         if (/^Người \d+$/.test(c.name)) c.name = `Người ${idx + 1}`;
       });
@@ -416,25 +418,25 @@
       renderAll();
     }
 
-    // Gộp thủ công nhóm nguồn (fromIdx) vào nhóm đích (toIdx)
+    // Gộp thủ công 2 nhóm (đảm bảo không trùng faceId)
     function mergeGroups(fromIdx, toIdx) {
       if (fromIdx === toIdx || !clusters[fromIdx] || !clusters[toIdx]) return;
       const src = clusters[fromIdx];
       const dst = clusters[toIdx];
+      const existingIds = new Set(dst.faces.map(f => f.faceId));
 
-      for (const it of src.items) {
-        if (!dst.items.some(x => x.photoUrl === it.photoUrl && x.fileName === it.fileName)) {
-          dst.items.push(it);
+      for (const f of src.faces) {
+        if (!existingIds.has(f.faceId)) {
+          existingIds.add(f.faceId);
+          dst.faces.push(f);
+          dst.descriptors.push(f.descriptor);
         }
       }
-      if (src.croppedFaces && src.croppedFaces.length) {
-        dst.croppedFaces = [...(dst.croppedFaces || []), ...src.croppedFaces];
-      }
-      dst.descriptors.push(...src.descriptors);
+
       dst.centroid = computeCentroid(dst.descriptors);
       if (src.bestScore > dst.bestScore) {
         dst.bestScore = src.bestScore;
-        dst.refAvatar = src.refAvatar;
+        dst.refUrl = src.refUrl;
       }
 
       clusters.splice(fromIdx, 1);
@@ -450,25 +452,21 @@
         div.className = 'group';
 
         const optionsHtml = clusters
-          .map((other, oIdx) => oIdx === idx ? '' : `<option value="${oIdx}">${other.name} (${other.items.length})</option>`)
+          .map((other, oIdx) => oIdx === idx ? '' : `<option value="${oIdx}">${other.name} (${other.faces.length} mặt)</option>`)
           .join('');
 
         div.innerHTML = `
           <div class="group-header">
-            <img class="avatar" src="${c.refAvatar || c.avatar}" title="Ảnh reference nét nhất của nhóm" />
+            <img class="avatar" src="${c.refUrl}" title="Mặt reference nét nhất của nhóm" />
             <input class="name-input" value="${c.name}" />
-            <span class="count">${c.items.length} ảnh</span>
+            <span class="count">${c.faces.length} mặt</span>
           </div>
           <div class="merge-bar">
             <span>Gộp nhóm này vào:</span>
             <select class="merge-select">${optionsHtml || '<option value="">-- Không có nhóm khác --</option>'}</select>
             <button class="secondary merge-btn" ${optionsHtml ? '' : 'disabled'}>Gộp vào</button>
           </div>
-          <div class="grid main-grid"></div>
-          <div class="cropped-box" style="${(c.croppedFaces && c.croppedFaces.length) ? '' : 'display:none'}">
-            <div class="cropped-title">Mặt đã crop tách rời (${(c.croppedFaces || []).length}):</div>
-            <div class="grid crop-grid"></div>
-          </div>
+          <div class="grid"></div>
         `;
 
         const nameInput = div.querySelector('.name-input');
@@ -484,76 +482,29 @@
           if (!Number.isNaN(targetIdx)) mergeGroups(idx, targetIdx);
         });
 
-        const mainGrid = div.querySelector('.main-grid');
-        c.items.forEach(it => {
+        const grid = div.querySelector('.grid');
+        c.faces.forEach(face => {
           const tile = document.createElement('div');
           tile.className = 'tile';
-          tile.innerHTML = `<img src="${it.photoUrl}" /><span class="tile-badge">${Math.round((it.score || 0) * 100)}%</span>`;
-          tile.querySelector('img').onclick = () => openModal({
-            groupIdx: idx,
-            photoUrl: it.photoUrl,
-            fileName: it.fileName,
-            isCropped: false
-          });
-          mainGrid.appendChild(tile);
+          tile.innerHTML = `<img src="${face.croppedUrl}" /><span class="tile-badge">${Math.round(face.score * 100)}%</span>`;
+          tile.querySelector('img').onclick = () => openModal(idx, face.faceId);
+          grid.appendChild(tile);
         });
-
-        if (c.croppedFaces && c.croppedFaces.length) {
-          const cropGrid = div.querySelector('.crop-grid');
-          c.croppedFaces.forEach((cr, cIdx) => {
-            const tile = document.createElement('div');
-            tile.className = 'tile';
-            tile.innerHTML = `<img src="${cr.dataUrl}" /><span class="tile-badge">Crop #${cIdx + 1}</span>`;
-            tile.querySelector('img').onclick = () => openModal({
-              groupIdx: idx,
-              photoUrl: cr.dataUrl,
-              fileName: cr.fileName,
-              isCropped: true
-            });
-            cropGrid.appendChild(tile);
-          });
-        }
 
         resultsEl.appendChild(div);
       });
-
-      if (noFaceItems.length > 0) {
-        const div = document.createElement('div');
-        div.className = 'group';
-        div.innerHTML = `
-          <div class="group-header">
-            <strong style="flex:1">Ảnh chưa phát hiện mặt / Collage cần crop tay</strong>
-            <span class="count">${noFaceItems.length} ảnh</span>
-          </div>
-          <div class="grid noface-grid"></div>
-        `;
-        const nfGrid = div.querySelector('.noface-grid');
-        noFaceItems.forEach(it => {
-          const tile = document.createElement('div');
-          tile.className = 'tile';
-          tile.innerHTML = `<img src="${it.photoUrl}" />`;
-          tile.querySelector('img').onclick = () => openModal({
-            groupIdx: -1,
-            photoUrl: it.photoUrl,
-            fileName: it.fileName,
-            isCropped: false
-          });
-          nfGrid.appendChild(tile);
-        });
-        resultsEl.appendChild(div);
-      }
     }
 
-    function openModal(ctx) {
-      activeModalCtx = ctx;
-      modalImg.src = ctx.photoUrl;
-      downloadLink.href = ctx.photoUrl;
-      downloadLink.download = ctx.fileName || 'photo.jpg';
-      modalNote.textContent = ctx.groupIdx >= 0
-        ? `Nhóm: ${clusters[ctx.groupIdx].name} • Reference nét nhất của nhóm: score ${Math.round((clusters[ctx.groupIdx].bestScore || 0) * 100)}%`
-        : 'Ảnh chưa thuộc nhóm nào — bấm "Crop từng mặt" để dò và tách mặt từ collage.';
-      cropFacesBtn.style.display = ctx.isCropped ? 'none' : 'inline-block';
-      enhanceFaceBtn.style.display = ctx.groupIdx >= 0 ? 'inline-block' : 'none';
+    function openModal(groupIdx, faceId) {
+      const group = clusters[groupIdx];
+      const face = group.faces.find(f => f.faceId === faceId);
+      if (!face) return;
+
+      activeModalCtx = { groupIdx, faceId };
+      modalImg.src = face.croppedUrl;
+      downloadLink.href = face.croppedUrl;
+      downloadLink.download = face.fileName;
+      modalNote.textContent = `Nhóm: ${group.name} • Reference chuẩn của nhóm: score ${Math.round(group.bestScore * 100)}%`;
       modal.style.display = 'flex';
     }
 
@@ -562,143 +513,92 @@
       activeModalCtx = null;
     }
 
-    // Crop riêng từng khuôn mặt trong ảnh / collage
-    cropFacesBtn.addEventListener('click', async () => {
-      if (!activeModalCtx) return;
-      cropFacesBtn.disabled = true;
-      modalNote.textContent = 'Đang dò và tách riêng từng khuôn mặt...';
-
-      try {
-        const { canvas } = await loadImageResized(activeModalCtx.photoUrl, 1600);
-        const opts = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.45 });
-        const detections = await faceapi
-          .detectAllFaces(canvas, opts)
-          .withFaceLandmarks()
-          .withFaceDescriptors();
-
-        if (!detections.length) {
-          modalNote.textContent = 'Không tìm thấy khuôn mặt rõ ràng trong ảnh này.';
-          cropFacesBtn.disabled = false;
-          return;
-        }
-
-        let addedCount = 0;
-        for (let i = 0; i < detections.length; i++) {
-          const det = detections[i];
-          const faceUrl = cropFaceDataUrl(canvas, det.detection.box, 220, 0.28);
-          const faceName = `${(activeModalCtx.fileName || 'collage').replace(/\.[^.]+$/, '')}_mat_${i + 1}.jpg`;
-
-          // Nếu đang mở từ 1 nhóm, khớp descriptor với nhóm đó; nếu ở mục chưa có nhóm thì tìm hoặc tạo nhóm
-          let targetGroupIdx = activeModalCtx.groupIdx;
-          if (targetGroupIdx < 0) {
-            targetGroupIdx = clusters.findIndex(
-              c => faceapi.euclideanDistance(det.descriptor, c.centroid) < parseFloat(thresholdInput.value) + 0.04
-            );
-            if (targetGroupIdx < 0) {
-              clusters.push({
-                name: `Người ${clusters.length + 1}`,
-                avatar: faceUrl,
-                refAvatar: faceUrl,
-                bestScore: det.detection.score,
-                descriptors: [det.descriptor],
-                centroid: det.descriptor,
-                items: [],
-                croppedFaces: []
-              });
-              targetGroupIdx = clusters.length - 1;
-            }
-          }
-
-          clusters[targetGroupIdx].croppedFaces = clusters[targetGroupIdx].croppedFaces || [];
-          clusters[targetGroupIdx].croppedFaces.push({ dataUrl: faceUrl, fileName: faceName });
-          addedCount++;
-        }
-
-        canvas.width = 0;
-        canvas.height = 0;
-        renderAll();
-        modalNote.textContent = `Đã tách riêng ${addedCount} khuôn mặt và đưa vào mục "Mặt đã crop tách rời".`;
-      } catch (e) {
-        modalNote.textContent = 'Lỗi khi crop khuôn mặt.';
-      } finally {
-        cropFacesBtn.disabled = false;
-      }
-    });
-
-    // Enhance mặt mờ dựa theo reference của nhóm (sharpen + contrast + reference micro-blend)
+    // Enhance khuôn mặt mờ dựa theo reference của nhóm
     enhanceFaceBtn.addEventListener('click', async () => {
-      if (!activeModalCtx || activeModalCtx.groupIdx < 0) return;
+      if (!activeModalCtx) return;
       const group = clusters[activeModalCtx.groupIdx];
+      const face = group.faces.find(f => f.faceId === activeModalCtx.faceId);
+      if (!face) return;
+
       enhanceFaceBtn.disabled = true;
       modalNote.textContent = 'Đang enhance dựa theo reference của nhóm...';
 
       try {
-        const { canvas } = await loadImageResized(activeModalCtx.photoUrl, 1280);
+        const size = 384; // Upscale nhẹ từ 256 -> 384
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
         const ctx = canvas.getContext('2d');
-        const w = canvas.width;
-        const h = canvas.height;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
 
-        // Unsharp mask đơn giản trên ImageData để tăng độ nét cạnh
-        const srcData = ctx.getImageData(0, 0, w, h);
-        const outData = ctx.createImageData(w, h);
+        const targetImg = await new Promise((res, rej) => {
+          const im = new Image();
+          im.onload = () => res(im);
+          im.onerror = rej;
+          im.src = face.croppedUrl;
+        });
+        ctx.drawImage(targetImg, 0, 0, size, size);
+
+        // Unsharp mask + micro-contrast
+        const srcData = ctx.getImageData(0, 0, size, size);
+        const outData = ctx.createImageData(size, size);
         const d = srcData.data;
         const o = outData.data;
-        const amount = 0.85;
+        const amount = 0.95;
 
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const idx = (y * w + x) * 4;
+        for (let y = 1; y < size - 1; y++) {
+          for (let x = 1; x < size - 1; x++) {
+            const idx = (y * size + x) * 4;
             for (let c = 0; c < 3; c++) {
               const center = d[idx + c];
               const neighborsAvg = (
-                d[((y - 1) * w + x) * 4 + c] +
-                d[((y + 1) * w + x) * 4 + c] +
-                d[(y * w + (x - 1)) * 4 + c] +
-                d[(y * w + (x + 1)) * 4 + c]
+                d[((y - 1) * size + x) * 4 + c] +
+                d[((y + 1) * size + x) * 4 + c] +
+                d[(y * size + (x - 1)) * 4 + c] +
+                d[(y * size + (x + 1)) * 4 + c]
               ) * 0.25;
               const sharpened = center + amount * (center - neighborsAvg);
-              // Nhẹ nhàng tăng contrast quanh 128
-              const contrasted = (sharpened - 128) * 1.08 + 128;
+              const contrasted = (sharpened - 128) * 1.10 + 128;
               o[idx + c] = Math.max(0, Math.min(255, contrasted));
             }
             o[idx + 3] = d[idx + 3];
           }
         }
-
-        // Copy biên ngoài
         for (let i = 0; i < d.length; i++) {
           if (o[i] === 0 && d[i] > 0) o[i] = d[i];
         }
         ctx.putImageData(outData, 0, 0);
 
-        // Nếu là ảnh crop mặt nhỏ hoặc ảnh chân dung có mặt, blend rất nhẹ (12%) reference rõ nhất nếu lệch tông màu/độ nét
-        if (group.refAvatar) {
+        // Blend nhẹ (15%) từ mặt reference sắc nét nhất của cùng nhóm để hỗ trợ chi tiết/tông màu
+        if (group.refUrl && group.refUrl !== face.croppedUrl) {
           const refImg = await new Promise((res, rej) => {
             const im = new Image();
             im.onload = () => res(im);
             im.onerror = rej;
-            im.src = group.refAvatar;
+            im.src = group.refUrl;
           });
-          const dets = await faceapi.detectAllFaces(canvas, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.45 }));
-          if (dets.length > 0) {
-            const box = dets[0].box;
-            ctx.save();
-            ctx.globalAlpha = 0.14;
-            ctx.drawImage(refImg, box.x, box.y, box.width, box.height);
-            ctx.restore();
-          }
+          ctx.save();
+          ctx.globalAlpha = 0.15;
+          ctx.drawImage(refImg, 0, 0, size, size);
+          ctx.restore();
         }
 
-        const enhancedUrl = canvas.toDataURL('image/jpeg', 0.92);
+        const enhancedUrl = canvas.toDataURL('image/jpeg', 0.94);
         canvas.width = 0;
         canvas.height = 0;
 
+        // Cập nhật thẳng ảnh đã enhance vào tile của nhóm để dùng luôn
+        face.croppedUrl = enhancedUrl;
+        face.fileName = `enhanced_${face.fileName}`;
+        renderAll();
+
         modalImg.src = enhancedUrl;
         downloadLink.href = enhancedUrl;
-        downloadLink.download = `enhanced_${activeModalCtx.fileName || 'photo.jpg'}`;
-        modalNote.textContent = `Đã áp dụng Sharpen + Reference guide (${group.name}). Lưu ý: đây là xử lý local trên browser, không thay thế AI restoration nặng.`;
+        downloadLink.download = face.fileName;
+        modalNote.textContent = `Đã enhance theo reference của "${group.name}" và cập nhật vào danh sách.`;
       } catch (e) {
-        modalNote.textContent = 'Không thể enhance ảnh này.';
+        modalNote.textContent = 'Không thể enhance khuôn mặt này.';
       } finally {
         enhanceFaceBtn.disabled = false;
       }
