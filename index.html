@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Crop Collage, Gom Nhóm Độc Quyền & Enhance (iPhone)</title>
+  <title>Gom Mặt Bằng ArcFace (iPhone)</title>
   <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     body {
@@ -166,16 +167,17 @@
   <div class="card">
     <input type="file" id="fileInput" accept="image/*" multiple />
     <div class="row">
-      <label for="threshold">Ngưỡng khớp (<span id="thVal">0.42</span>):</label>
-      <input type="range" id="threshold" min="0.32" max="0.55" step="0.01" value="0.42" />
+      <label for="threshold">Độ giống tối thiểu (<span id="thVal">0.40</span>):</label>
+      <input type="range" id="threshold" min="0.25" max="0.60" step="0.01" value="0.40" />
       <button id="startBtn" disabled>Đang tải AI...</button>
     </div>
     <div class="hint">
+      • Nhận diện bằng mô hình <b>ArcFace</b> (InsightFace) chính xác hơn bản cũ. Kéo thanh trượt sang <b>phải</b> = chặt hơn (ít nhầm người hơn), sang <b>trái</b> = lỏng hơn.<br/>
       • Tự động phát hiện & cắt riêng từng khuôn mặt trong ảnh gốc/collage ngay lúc quét (ẩn toàn bộ ảnh collage gốc).<br/>
       • Mỗi khuôn mặt đã crop được gắn ID duy nhất và khóa độc quyền vào đúng 1 nhóm người (không bao giờ lặp sang người khác).<br/>
       • Bấm vào từng khuôn mặt để <b>Enhance theo reference</b> của nhóm hoặc tải về.
     </div>
-    <div id="status">Đang tải mô hình SSD MobileNetV1...</div>
+    <div id="status">Đang tải mô hình AI (lần đầu khoảng 30MB)...</div>
   </div>
 
   <div id="results"></div>
@@ -220,20 +222,124 @@
       statusEl.className = isErr ? 'err' : '';
     }
 
+    const ARCFACE_URL = 'https://huggingface.co/immich-app/buffalo_s/resolve/main/recognition/model.onnx';
+    const ORT_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/';
+    let arcSession = null;
+
     window.addEventListener('load', async () => {
       try {
         await Promise.all([
           faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-          faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL)
         ]);
+      } catch (e) {
+        setStatus('Lỗi tải mô hình dò mặt. Kiểm tra mạng và tải lại trang.', true);
+        return;
+      }
+
+      try {
+        setStatus('Đang tải mô hình ArcFace (khoảng 14MB)...');
+        ort.env.wasm.numThreads = 1;
+        ort.env.wasm.wasmPaths = ORT_BASE;
+        const res = await fetch(ARCFACE_URL);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const buf = await res.arrayBuffer();
+        arcSession = await ort.InferenceSession.create(new Uint8Array(buf), { executionProviders: ['wasm'] });
         setStatus('AI sẵn sàng! Chọn ảnh hoặc collage để tự động crop & gom mặt.');
         startBtn.textContent = 'Bắt đầu crop & gom mặt';
         startBtn.disabled = false;
       } catch (e) {
-        setStatus('Lỗi tải model AI. Kiểm tra mạng và tải lại trang.', true);
+        console.error(e);
+        setStatus('Lỗi tải mô hình ArcFace: ' + (e.message || e), true);
       }
     });
+
+    // ===== ARCFACE: căn chỉnh mặt về 112x112 rồi trích đặc trưng 512 chiều =====
+    const ARC_TEMPLATE = [
+      [38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366],
+      [41.5493, 92.3655], [70.7299, 92.2041]
+    ];
+
+    function avgPoint(pts, idxs) {
+      let x = 0, y = 0;
+      idxs.forEach(i => { x += pts[i].x; y += pts[i].y; });
+      return [x / idxs.length, y / idxs.length];
+    }
+
+    // Tìm phép biến đổi (xoay + co giãn + dịch) đưa 5 điểm mốc về khuôn mẫu ArcFace
+    function similarityTransform(src, dst) {
+      const n = src.length;
+      const msx = src.reduce((s, p) => s + p[0], 0) / n;
+      const msy = src.reduce((s, p) => s + p[1], 0) / n;
+      const mdx = dst.reduce((s, p) => s + p[0], 0) / n;
+      const mdy = dst.reduce((s, p) => s + p[1], 0) / n;
+      let num1 = 0, num2 = 0, den = 0;
+      for (let i = 0; i < n; i++) {
+        const xs = src[i][0] - msx, ys = src[i][1] - msy;
+        const xd = dst[i][0] - mdx, yd = dst[i][1] - mdy;
+        num1 += xs * xd + ys * yd;
+        num2 += xs * yd - ys * xd;
+        den += xs * xs + ys * ys;
+      }
+      const a = num1 / den;
+      const b = num2 / den;
+      const tx = mdx - (a * msx - b * msy);
+      const ty = mdy - (b * msx + a * msy);
+      return { a, b, tx, ty };
+    }
+
+    async function getArcEmbedding(sourceCanvas, landmarks) {
+      const pts = landmarks.positions;
+      const src = [
+        avgPoint(pts, [36, 37, 38, 39, 40, 41]), // mắt bên trái ảnh
+        avgPoint(pts, [42, 43, 44, 45, 46, 47]), // mắt bên phải ảnh
+        [pts[30].x, pts[30].y],                  // đầu mũi
+        [pts[48].x, pts[48].y],                  // khóe miệng trái
+        [pts[54].x, pts[54].y]                   // khóe miệng phải
+      ];
+      const { a, b, tx, ty } = similarityTransform(src, ARC_TEMPLATE);
+
+      const aligned = document.createElement('canvas');
+      aligned.width = 112;
+      aligned.height = 112;
+      const ctx = aligned.getContext('2d', { willReadFrequently: true });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.setTransform(a, b, -b, a, tx, ty);
+      ctx.drawImage(sourceCanvas, 0, 0);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      const px = ctx.getImageData(0, 0, 112, 112).data;
+      const data = new Float32Array(3 * 112 * 112);
+      const plane = 112 * 112;
+      for (let i = 0; i < plane; i++) {
+        data[i] = (px[i * 4] - 127.5) / 127.5;               // R
+        data[plane + i] = (px[i * 4 + 1] - 127.5) / 127.5;   // G
+        data[2 * plane + i] = (px[i * 4 + 2] - 127.5) / 127.5; // B
+      }
+      aligned.width = 0;
+      aligned.height = 0;
+
+      const input = new ort.Tensor('float32', data, [1, 3, 112, 112]);
+      const out = await arcSession.run({ [arcSession.inputNames[0]]: input });
+      const emb = Float32Array.from(out[arcSession.outputNames[0]].data);
+      return l2normalize(emb);
+    }
+
+    function l2normalize(v) {
+      let s = 0;
+      for (let i = 0; i < v.length; i++) s += v[i] * v[i];
+      s = Math.sqrt(s) || 1;
+      const o = new Float32Array(v.length);
+      for (let i = 0; i < v.length; i++) o[i] = v[i] / s;
+      return o;
+    }
+
+    function cosine(a, b) {
+      let s = 0;
+      for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+      return s;
+    }
 
     // Đọc ảnh tạm vào canvas để dò mặt và crop, sau đó giải phóng ngay ảnh gốc
     function loadImageToCanvas(file, maxSize = 1600) {
@@ -292,8 +398,7 @@
       for (const desc of descriptors) {
         for (let i = 0; i < len; i++) avg[i] += desc[i];
       }
-      for (let i = 0; i < len; i++) avg[i] /= descriptors.length;
-      return avg;
+      return l2normalize(avg);
     }
 
     // BƯỚC 1: Crop toàn bộ từng khuôn mặt trong tất cả ảnh/collage trước
@@ -321,8 +426,7 @@
           const canvas = await loadImageToCanvas(files[i], 1600);
           const detections = await faceapi
             .detectAllFaces(canvas, detectorOptions)
-            .withFaceLandmarks()
-            .withFaceDescriptors();
+            .withFaceLandmarks();
 
           // Lọc bỏ nhiễu quá nhỏ (< 40px)
           const validDetections = detections.filter(
@@ -330,17 +434,25 @@
           );
 
           const baseName = files[i].name.replace(/\.[^.]+$/, '');
-          validDetections.forEach((det, idx) => {
+          for (let idx = 0; idx < validDetections.length; idx++) {
+            const det = validDetections[idx];
+            let embedding;
+            try {
+              embedding = await getArcEmbedding(canvas, det.landmarks);
+            } catch (embErr) {
+              console.warn('Bỏ qua mặt lỗi:', embErr);
+              continue;
+            }
             uniqueFaceCounter++;
             const croppedUrl = cropSingleFace(canvas, det.detection.box, 256, 0.30);
             croppedFacePool.push({
               faceId: `face_${uniqueFaceCounter}`,
-              descriptor: det.descriptor,
+              descriptor: embedding,
               score: det.detection.score,
               croppedUrl: croppedUrl,
               fileName: `${baseName}_mat${idx + 1}.jpg`
             });
-          });
+          }
 
           // Xóa canvas ảnh collage gốc ngay lập tức
           canvas.width = 0;
@@ -375,14 +487,20 @@
         if (assignedFaceIds.has(face.faceId)) continue;
 
         let bestCluster = null;
-        let minDist = threshold;
+        let bestSim = threshold;
 
         for (const c of clusters) {
-          const distCentroid = faceapi.euclideanDistance(face.descriptor, c.centroid);
-          const distAnchor = faceapi.euclideanDistance(face.descriptor, c.descriptors[0]);
-          const dist = Math.max(distCentroid, distAnchor * 0.95);
-          if (dist < minDist) {
-            minDist = dist;
+          // Phải giống tâm nhóm VÀ giống ít nhất 1 mặt trong nhóm (tránh nhóm bị "loang")
+          const simCentroid = cosine(face.descriptor, c.centroid);
+          if (simCentroid < bestSim) continue;
+          let simMax = -1;
+          for (const d of c.descriptors) {
+            const s = cosine(face.descriptor, d);
+            if (s > simMax) simMax = s;
+          }
+          if (simMax < threshold + 0.05) continue;
+          if (simCentroid >= bestSim) {
+            bestSim = simCentroid;
             bestCluster = c;
           }
         }
