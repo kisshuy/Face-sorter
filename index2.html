@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Face Sorter v7 — Local DB & Smart Reassign</title>
+  <title>Face Sorter v8 — Incremental Scan & Protected DB</title>
   <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/human/dist/human.js"></script>
   <script type="module">
     import { FilesetResolver, FaceLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
@@ -29,7 +29,7 @@
       background: var(--bg);
       color: var(--text);
       margin: 0;
-      padding: 10px;
+      padding: 10px 10px 84px 10px;
     }
     .topbar {
       background: var(--card);
@@ -60,13 +60,13 @@
       align-items: center;
       gap: 6px;
     }
-    .controls-grid {
-      display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 8px;
+
+    /* Hàng Upload + thanh review file gốc click-and-roll ngay bên cạnh */
+    .upload-row {
+      display: flex;
       align-items: center;
+      gap: 8px;
     }
-    input[type="file"] { font-size: 12.5px; width: 100%; }
     .btn {
       background: var(--accent);
       color: #fff;
@@ -77,12 +77,52 @@
       font-weight: 600;
       cursor: pointer;
       white-space: nowrap;
+      flex-shrink: 0;
     }
     .btn:disabled { background: #aeb8c7; cursor: not-allowed; }
     .btn-ghost { background: #f2f4f8; color: var(--text); border: 1px solid var(--border); }
     .btn-ok { background: var(--ok); color: #fff; }
     .btn-danger { background: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
     .btn-sm { padding: 4px 8px; font-size: 11.5px; border-radius: 7px; }
+
+    .originals-roll {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      flex: 1;
+      min-height: 44px;
+      padding: 3px 6px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+    }
+    .orig-thumb {
+      position: relative;
+      width: 38px;
+      height: 38px;
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+      border: 1px solid #cbd5e1;
+      cursor: pointer;
+    }
+    .orig-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .orig-idx {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      font-size: 8.5px;
+      background: rgba(15, 23, 42, 0.72);
+      color: #fff;
+      padding: 0 3px;
+      border-top-left-radius: 4px;
+    }
 
     .meta-row {
       display: flex;
@@ -93,9 +133,9 @@
       color: var(--muted);
     }
     .meta-row label { display: flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text); }
-    input[type="range"] { width: 100px; }
+    input[type="range"] { width: 96px; }
     .stats-bar {
-      font-size: 12px;
+      font-size: 11.5px;
       font-weight: 600;
       color: var(--accent);
       background: #f6f9ff;
@@ -105,7 +145,7 @@
     }
     .stats-bar.err { color: var(--danger); background: #fef2f2; border-color: #fecaca; }
 
-    /* Khung Unsure nằm trên cùng, chiều cao gọn, không text thừa, nút Re-check nằm ngay cạnh */
+    /* Thanh Unsure gọn trên cùng */
     .unsure-strip {
       background: #fffbeb;
       border: 1px solid #fcd34d;
@@ -115,7 +155,7 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      min-height: 62px;
+      min-height: 58px;
     }
     .unsure-badge {
       font-size: 11px;
@@ -132,12 +172,11 @@
       overflow-x: auto;
       flex: 1;
       align-items: center;
-      padding: 2px 0;
     }
     .unsure-thumb {
       position: relative;
-      width: 48px;
-      height: 48px;
+      width: 46px;
+      height: 46px;
       border-radius: 7px;
       overflow: hidden;
       flex-shrink: 0;
@@ -166,10 +205,6 @@
       padding: 8px;
       min-width: 0;
     }
-    .person-card.confirmed {
-      border-color: #86efac;
-      background: #f9fefb;
-    }
     .person-head {
       display: flex;
       align-items: center;
@@ -185,7 +220,7 @@
       border: 1.5px solid var(--accent);
     }
     .name-compact {
-      width: 68px;
+      width: 66px;
       min-width: 0;
       font-size: 12px;
       font-weight: 700;
@@ -268,19 +303,77 @@
       border-radius: 3px;
       pointer-events: none;
     }
-    .suspect-dot {
-      position: absolute;
-      top: 2px;
-      left: 2px;
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #f59e0b;
-      border: 1px solid #fff;
-      pointer-events: none;
+
+    /* Khung Bottom cuối trang chứa các Người đã Confirm Save vào Database (bảo vệ không bị crop/scan đè) */
+    .saved-db-section {
+      margin-top: 16px;
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+      border-radius: 13px;
+      padding: 10px;
+    }
+    .saved-db-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--ok);
+    }
+    .saved-card {
+      background: #ffffff;
+      border: 1.5px solid #4ade80;
+      border-radius: 12px;
+      padding: 8px;
+      min-width: 0;
+    }
+    .lock-badge {
+      font-size: 10px;
+      background: var(--ok-soft);
+      color: var(--ok);
+      padding: 2px 5px;
+      border-radius: 5px;
+      font-weight: 700;
     }
 
-    /* Modal xác nhận chuyển người / chi tiết mặt */
+    /* Floating + button & menu ở góc dưới bên phải */
+    .fab-wrap {
+      position: fixed;
+      right: 14px;
+      bottom: 16px;
+      z-index: 900;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+    }
+    .fab-menu {
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+    }
+    .fab-menu.open { display: flex; }
+    .fab-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      font-size: 24px;
+      font-weight: 600;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(15, 98, 254, 0.35);
+    }
+
+    /* Modals */
     .overlay {
       display: none;
       position: fixed;
@@ -296,7 +389,7 @@
       color: var(--text);
       border-radius: 14px;
       padding: 13px;
-      max-width: 420px;
+      max-width: 430px;
       width: 100%;
       display: flex;
       flex-direction: column;
@@ -319,10 +412,11 @@
       gap: 4px;
       font-size: 11.5px;
       font-weight: 600;
+      text-align: center;
     }
     .compare-card img {
-      width: 96px;
-      height: 96px;
+      width: 92px;
+      height: 92px;
       object-fit: cover;
       border-radius: 8px;
       border: 1px solid var(--border);
@@ -338,7 +432,7 @@
     }
     .modal-main-img {
       width: 100%;
-      max-height: 44vh;
+      max-height: 56vh;
       object-fit: contain;
       border-radius: 9px;
       background: #111;
@@ -351,16 +445,24 @@
 
   <div class="topbar">
     <div class="title-row">
-      <h1>Face Sorter v7 — iPad M1+</h1>
+      <h1>Face Sorter v8 — iPad M1+</h1>
       <div class="db-pill">
         <span>DB đã lưu: <b id="dbCount">0</b> người</span>
+        <button id="exportDbBtn" class="btn btn-sm btn-ghost" style="padding:2px 6px;font-size:10.5px;">Export</button>
         <button id="clearDbBtn" class="btn btn-sm btn-ghost" style="padding:2px 6px;font-size:10.5px;">Xoá DB</button>
       </div>
     </div>
-    <div class="controls-grid">
-      <input type="file" id="fileInput" accept="image/*" multiple />
-      <button id="runBtn" class="btn" disabled>Đang tải AI...</button>
+
+    <!-- Hàng Upload + thanh review file gốc click-and-roll ngay cạnh -->
+    <div class="upload-row">
+      <input type="file" id="fileInput" accept="image/*" multiple hidden />
+      <input type="file" id="extraFileInput" accept="image/*" multiple hidden />
+      <button id="uploadBtn" class="btn" disabled>Đang tải AI...</button>
+      <div id="originalsRoll" class="originals-roll" title="Danh sách ảnh gốc đã upload (bấm để xem)">
+        <span style="font-size:11px;color:var(--muted);">Chưa có ảnh gốc</span>
+      </div>
     </div>
+
     <div class="meta-row">
       <label>Khớp tối thiểu: <span id="simLabel">72%</span>
         <input type="range" id="simThreshold" min="52" max="92" step="1" value="72" />
@@ -372,44 +474,62 @@
     <div id="status" class="stats-bar">Đang tải mô hình MediaPipe & Human FaceRes...</div>
   </div>
 
-  <!-- Khung Unsure ở trên cùng, chiều cao gọn, không text dài, nút Re-check unsure nằm ngay cạnh -->
+  <!-- Thanh Unsure gọn trên cùng, nút Re-check unsure nằm ngay cạnh -->
   <div class="unsure-strip">
     <span class="unsure-badge" id="unsureBadge">0</span>
     <div id="unsureGrid" class="unsure-scroll"></div>
     <button id="recheckUnsureBtn" class="btn btn-sm btn-ghost">Re-check unsure</button>
   </div>
 
+  <!-- Lưới các nhóm mới đang phân loại -->
   <div id="peopleGrid" class="people-grid"></div>
 
-  <!-- Modal xác nhận đề xuất chuyển người khi bấm Xoá -->
+  <!-- Khung Bottom cuối trang: Những người đã được Confirm Save vào Database -->
+  <div class="saved-db-section">
+    <div class="saved-db-header">
+      <span>Đã lưu vào Database (<span id="savedPeopleCount">0</span> người — Khóa bảo vệ khỏi quét/crop lại)</span>
+    </div>
+    <div id="savedPeopleGrid" class="people-grid"></div>
+  </div>
+
+  <!-- Nút + góc dưới bên phải -->
+  <div class="fab-wrap">
+    <div id="fabMenu" class="fab-menu">
+      <button id="addManualPersonBtn" class="btn btn-sm btn-ghost">+ Thêm người mới thủ công</button>
+      <button id="extraUploadBtn" class="btn btn-sm">+ Extra upload thêm ảnh</button>
+    </div>
+    <button id="fabToggleBtn" class="fab-btn" title="Thêm người hoặc Extra upload">+</button>
+  </div>
+
+  <!-- Modal xác nhận đề xuất (dùng cho cả Xoá chuyển người & Đề xuất gom vào người đã lưu trong DB) -->
   <div id="confirmMoveModal" class="overlay" onclick="closeConfirmModal()">
     <div class="modal-box" onclick="event.stopPropagation()">
-      <div style="font-size:13.5px;font-weight:700;">Đề xuất chuyển sang người gần giống nhất</div>
+      <div id="cmpTitle" style="font-size:13.5px;font-weight:700;">Đề xuất chuyển người</div>
       <div class="compare-row">
         <div class="compare-card">
           <img id="cmpSrcImg" src="" alt="" />
-          <span id="cmpSrcLabel">Mặt vừa xoá</span>
+          <span id="cmpSrcLabel">Mặt đối chiếu</span>
         </div>
         <div class="sim-badge" id="cmpSimPct">0%</div>
         <div class="compare-card">
           <img id="cmpDstImg" src="" alt="" />
-          <span id="cmpDstLabel">Đề xuất</span>
+          <span id="cmpDstLabel">Người đích</span>
         </div>
       </div>
       <div id="cmpDesc" class="modal-info"></div>
       <div class="modal-actions">
-        <button id="cmpNoBtn" class="btn btn-sm btn-danger">No (Không khớp)</button>
-        <button id="cmpYesBtn" class="btn btn-sm btn-ok">Yes (Chuyển sang)</button>
+        <button id="cmpNoBtn" class="btn btn-sm btn-danger">No</button>
+        <button id="cmpYesBtn" class="btn btn-sm btn-ok">Yes</button>
       </div>
     </div>
   </div>
 
-  <!-- Modal xem chi tiết & chuyển thủ công -->
+  <!-- Modal xem chi tiết mặt hoặc ảnh gốc -->
   <div id="detailModal" class="overlay" onclick="closeDetailModal()">
     <div class="modal-box" onclick="event.stopPropagation()">
       <img id="detailImg" class="modal-main-img" src="" alt="" />
       <div id="detailInfo" class="modal-info"></div>
-      <div class="modal-actions">
+      <div id="detailActions" class="modal-actions">
         <select id="moveTargetSelect"></select>
         <button id="moveTargetBtn" class="btn btn-sm">Chuyển người</button>
         <button id="removeStrikeBtn" class="btn btn-sm btn-danger">Xoá (đề xuất chuyển)</button>
@@ -421,24 +541,35 @@
   <script type="module">
     const MP_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
     const MP_WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
-    const DB_NAME = "FaceSorterLocalDB_v7";
-    const STORE_NAME = "known_people";
+    const DB_NAME = "FaceSorterProtectedDB_v8";
+    const STORE_NAME = "saved_people";
 
     const fileInput = document.getElementById("fileInput");
-    const runBtn = document.getElementById("runBtn");
+    const extraFileInput = document.getElementById("extraFileInput");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const originalsRoll = document.getElementById("originalsRoll");
     const statusEl = document.getElementById("status");
     const simThresholdEl = document.getElementById("simThreshold");
     const simLabel = document.getElementById("simLabel");
     const maxYawEl = document.getElementById("maxYaw");
     const yawLabel = document.getElementById("yawLabel");
     const peopleGrid = document.getElementById("peopleGrid");
+    const savedPeopleGrid = document.getElementById("savedPeopleGrid");
+    const savedPeopleCountEl = document.getElementById("savedPeopleCount");
     const unsureGrid = document.getElementById("unsureGrid");
     const unsureBadge = document.getElementById("unsureBadge");
     const recheckUnsureBtn = document.getElementById("recheckUnsureBtn");
     const dbCountEl = document.getElementById("dbCount");
     const clearDbBtn = document.getElementById("clearDbBtn");
+    const exportDbBtn = document.getElementById("exportDbBtn");
+
+    const fabToggleBtn = document.getElementById("fabToggleBtn");
+    const fabMenu = document.getElementById("fabMenu");
+    const addManualPersonBtn = document.getElementById("addManualPersonBtn");
+    const extraUploadBtn = document.getElementById("extraUploadBtn");
 
     const confirmMoveModal = document.getElementById("confirmMoveModal");
+    const cmpTitle = document.getElementById("cmpTitle");
     const cmpSrcImg = document.getElementById("cmpSrcImg");
     const cmpSrcLabel = document.getElementById("cmpSrcLabel");
     const cmpDstImg = document.getElementById("cmpDstImg");
@@ -451,33 +582,38 @@
     const detailModal = document.getElementById("detailModal");
     const detailImg = document.getElementById("detailImg");
     const detailInfo = document.getElementById("detailInfo");
+    const detailActions = document.getElementById("detailActions");
     const moveTargetSelect = document.getElementById("moveTargetSelect");
     const moveTargetBtn = document.getElementById("moveTargetBtn");
     const removeStrikeBtn = document.getElementById("removeStrikeBtn");
 
     let human = null;
     let faceLandmarker = null;
+    let uploadedFilesLog = []; // [{ key, name, thumbUrl, fullUrl }]
+    let processedFileKeys = new Set(); // Khóa file đã upload & crop để extra upload không quét lại
     let allFaces = [];
     let people = [];
     let unsureFaces = [];
-    let knownDB = []; // [{ id, name, centroid: Float32Array, samples: Float32Array[], avatarUrl }]
-    let scanStats = { scanned: 0, skipped: 0, skipReasons: [] };
-    let pendingProposal = null;
+    let savedDBPeople = []; // Các người đã Confirm Save vào DB (được bảo vệ tuyệt đối khỏi scan/crop lại)
+    let dbMatchProposals = []; // Hàng đợi đề xuất gom mặt/nhóm mới giống với người đã lưu trong DB
+    let scanStats = { scanned: 0, skipped: 0 };
+    let pendingModalAction = null;
     let detailCtx = null;
+    let idSeq = 0;
 
     function setStatus(msg, isErr = false) {
       statusEl.textContent = msg;
       statusEl.className = isErr ? "stats-bar err" : "stats-bar";
     }
 
-    // --- IndexedDB lưu danh tính đã xác nhận để dùng cho các lần quét sau ---
+    // --- IndexedDB quản lý người đã Confirm Save ---
     function openDB() {
       return new Promise((resolve, reject) => {
         const req = indexedDB.open(DB_NAME, 1);
         req.onupgradeneeded = () => {
           const db = req.result;
           if (!db.objectStoreNames.contains(STORE_NAME)) {
-            db.createObjectStore(STORE_NAME, { keyPath: "name" });
+            db.createObjectStore(STORE_NAME, { keyPath: "id" });
           }
         };
         req.onsuccess = () => resolve(req.result);
@@ -485,45 +621,56 @@
       });
     }
 
-    async function loadKnownDB() {
+    async function loadSavedDB() {
       try {
         const db = await openDB();
         const tx = db.transaction(STORE_NAME, "readonly");
-        const store = tx.objectStore(STORE_NAME);
         const rows = await new Promise((res, rej) => {
-          const r = store.getAll();
+          const r = tx.objectStore(STORE_NAME).getAll();
           r.onsuccess = () => res(r.result || []);
           r.onerror = () => rej(r.error);
         });
-        knownDB = rows.map(r => ({
+        savedDBPeople = rows.map(r => ({
+          id: r.id,
           name: r.name,
           centroid: l2Normalize(Float32Array.from(r.centroid)),
-          samples: (r.samples || []).map(s => l2Normalize(Float32Array.from(s))),
-          avatarUrl: r.avatarUrl || ""
+          embs: (r.embs || []).map(e => l2Normalize(Float32Array.from(e))),
+          faces: (r.faces || []).map(f => ({
+            id: f.id,
+            url: f.url,
+            fileName: f.fileName || r.name
+          }))
         }));
-        dbCountEl.textContent = knownDB.length;
-      } catch (e) {
-        console.warn("DB load error:", e);
+        dbCountEl.textContent = savedDBPeople.length;
+        savedPeopleCountEl.textContent = savedDBPeople.length;
+        renderSavedDBSection();
+      } catch (err) {
+        console.warn("DB load error:", err);
       }
     }
 
-    async function savePersonToDB(person) {
-      if (!person || !person.faces.length) return;
-      const validSamples = person.faces.filter(f => f.embedding).slice(0, 12).map(f => Array.from(f.embedding));
-      if (!validSamples.length) return;
-      const centroidArr = Array.from(calcNormalizedCentroid(validSamples.map(s => Float32Array.from(s))));
+    async function persistSavedPerson(personObj) {
+      const validEmbs = (personObj.embs || []).slice(0, 24).map(e => Array.from(e));
+      if (!validEmbs.length) return;
+      const centroidArr = Array.from(calcNormalizedCentroid(validEmbs.map(e => Float32Array.from(e))));
+      const savedFaces = (personObj.faces || []).slice(0, 30).map(f => ({
+        id: f.id,
+        url: f.url,
+        fileName: f.fileName || ""
+      }));
 
       const db = await openDB();
       const tx = db.transaction(STORE_NAME, "readwrite");
       tx.objectStore(STORE_NAME).put({
-        name: person.name.trim(),
+        id: personObj.id,
+        name: personObj.name.trim(),
         centroid: centroidArr,
-        samples: validSamples,
-        avatarUrl: person.faces[0].url,
+        embs: validEmbs,
+        faces: savedFaces,
         updatedAt: Date.now()
       });
       await new Promise(res => { tx.oncomplete = res; });
-      await loadKnownDB();
+      await loadSavedDB();
     }
 
     clearDbBtn.addEventListener("click", async () => {
@@ -531,13 +678,30 @@
       const tx = db.transaction(STORE_NAME, "readwrite");
       tx.objectStore(STORE_NAME).clear();
       await new Promise(res => { tx.oncomplete = res; });
-      knownDB = [];
+      savedDBPeople = [];
       dbCountEl.textContent = "0";
+      savedPeopleCountEl.textContent = "0";
+      renderSavedDBSection();
       setStatus("Đã xoá toàn bộ dữ liệu người đã lưu trong DB.");
     });
 
+    exportDbBtn.addEventListener("click", () => {
+      const dataStr = JSON.stringify(savedDBPeople.map(p => ({
+        id: p.id,
+        name: p.name,
+        centroid: Array.from(p.centroid),
+        embs: p.embs.map(e => Array.from(e)),
+        faces: p.faces
+      })));
+      const blob = new Blob([dataStr], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `face-sorter-db-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+    });
+
     async function initModels() {
-      await loadKnownDB();
+      await loadSavedDB();
       try {
         let wait = 0;
         while ((!window.Human || !window.__MP_VISION__) && wait < 100) {
@@ -554,7 +718,7 @@
           cacheSensitivity: 0,
           face: {
             enabled: true,
-            detector: { enabled: true, maxDetected: 18, minConfidence: 0.50, rotation: true },
+            detector: { enabled: true, maxDetected: 18, minConfidence: 0.55, rotation: true },
             mesh: { enabled: true },
             iris: { enabled: false },
             description: { enabled: true },
@@ -578,9 +742,9 @@
           outputFacialTransformationMatrixes: true
         });
 
-        runBtn.disabled = false;
-        runBtn.textContent = "Quét (10-20 ảnh)";
-        setStatus(`Sẵn sàng • DB đã nhớ ${knownDB.length} người.`);
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = "Upload";
+        setStatus(`Sẵn sàng • DB đang khóa bảo vệ ${savedDBPeople.length} người.`);
       } catch (err) {
         setStatus("Lỗi tải mô hình: " + err.message, true);
       }
@@ -588,14 +752,64 @@
 
     initModels();
 
+    uploadBtn.addEventListener("click", () => {
+      fileInput.value = "";
+      fileInput.click();
+    });
+
+    fileInput.addEventListener("change", async () => {
+      const files = Array.from(fileInput.files || []);
+      if (!files.length) return;
+      // Upload mới từ đầu (chỉ reset phiên làm việc hiện tại, KHÔNG chạm vào savedDBPeople)
+      processedFileKeys.clear();
+      uploadedFilesLog = [];
+      allFaces = [];
+      people = [];
+      unsureFaces = [];
+      scanStats = { scanned: 0, skipped: 0 };
+      await processIncrementalFiles(files, false);
+    });
+
+    // Nút + góc dưới bên phải
+    fabToggleBtn.addEventListener("click", () => {
+      fabMenu.classList.toggle("open");
+    });
+
+    extraUploadBtn.addEventListener("click", () => {
+      fabMenu.classList.remove("open");
+      extraFileInput.value = "";
+      extraFileInput.click();
+    });
+
+    extraFileInput.addEventListener("change", async () => {
+      const files = Array.from(extraFileInput.files || []);
+      if (!files.length) return;
+      await processIncrementalFiles(files, true);
+    });
+
+    addManualPersonBtn.addEventListener("click", () => {
+      fabMenu.classList.remove("open");
+      const name = prompt("Nhập tên người mới:");
+      if (!name || !name.trim()) return;
+      people.push({
+        id: `p_manual_${Date.now()}`,
+        name: name.trim(),
+        centroid: null,
+        embs: [],
+        faces: []
+      });
+      renderWorkingUI();
+      setStatus(`Đã tạo khung người mới "${name.trim()}". Bạn có thể chuyển mặt từ Unsure hoặc nhóm khác vào.`);
+    });
+
     simThresholdEl.addEventListener("input", () => {
       simLabel.textContent = `${simThresholdEl.value}%`;
-      if (allFaces.length > 0) clusterExclusive();
+      if (allFaces.length > 0) clusterWorkingFacesOnly();
     });
 
     maxYawEl.addEventListener("input", () => {
       yawLabel.textContent = `${maxYawEl.value}°`;
-      if (allFaces.length > 0) clusterExclusive();
+      if (allFaces.length > 0) clusterWorkingFacesOnly();
     });
 
     function l2Normalize(vec) {
@@ -614,17 +828,14 @@
       return Math.max(-1, Math.min(1, dot));
     }
 
-    // Đối chiếu mặt với TOÀN BỘ các mặt hiện có trong 1 người (kết hợp điểm cao nhất & trung bình centroid)
     function similarityToPerson(emb, person) {
-      if (!emb || !person) return 0;
+      if (!emb || !person || !person.centroid) return 0;
       const simCentroid = cosineSimilarity(emb, person.centroid);
       let maxSampleSim = simCentroid;
-      const samples = person.embs || person.samples || [];
-      for (const s of samples) {
+      for (const s of (person.embs || [])) {
         const sim = cosineSimilarity(emb, s);
         if (sim > maxSampleSim) maxSampleSim = sim;
       }
-      // Kết hợp đối chiếu toàn bộ mặt trong nhóm (tránh lệ thuộc 1 ảnh neo duy nhất)
       return 0.65 * maxSampleSim + 0.35 * simCentroid;
     }
 
@@ -679,72 +890,137 @@
       });
     }
 
-    // Cắt mặt STRICTLY bên trong khung mặt gốc (không mở rộng ra ngoài và kẹp biên không chạm khung khác)
-    function cropStrictlyInsideFaceBox(sourceCanvas, box, allBoxes, outSize = 240) {
-      let x1 = Math.max(0, box.x);
-      let y1 = Math.max(0, box.y);
-      let x2 = Math.min(sourceCanvas.width, box.x + box.width);
-      let y2 = Math.min(sourceCanvas.height, box.y + box.height);
+    function makeThumbUrl(canvas, size = 96) {
+      const t = document.createElement("canvas");
+      t.width = size;
+      t.height = size;
+      t.getContext("2d").drawImage(canvas, 0, 0, size, size);
+      const u = t.toDataURL("image/jpeg", 0.78);
+      t.width = 0; t.height = 0;
+      return u;
+    }
 
-      // Kẹp biên nếu khung mặt này giao hoặc sát khung mặt khác trong collage
+    // Sửa triệt để lỗi crop lấn khung & loại bỏ vùng chỉ có tóc/thân (không có mặt thật):
+    // 1. Giao điểm giữa khung Human và landmarks mặt thật của MediaPipe để đảm bảo crop đúng vùng khuôn mặt.
+    // 2. Kẹp chặt biên để không bao giờ chạm khung mặt kế bên.
+    function cropVerifiedFaceBox(sourceCanvas, box, allBoxes, mpFaces, outSize = 240) {
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+
+      // Tìm landmarks MediaPipe khớp tâm để xác nhận có cấu trúc mắt-mũi-miệng thật (tránh crop nhầm lọn tóc/cổ áo)
+      let matchedMp = null;
+      let bestD = Infinity;
+      for (const m of mpFaces) {
+        const d = Math.hypot(m.cx - cx, m.cy - cy);
+        if (d < bestD && d < Math.max(box.width, box.height) * 0.65) {
+          bestD = d;
+          matchedMp = m;
+        }
+      }
+
+      if (!matchedMp) {
+        return null; // Không có điểm mốc khuôn mặt thật -> bỏ qua để tránh crop nhầm tóc/nền như IMG_1789
+      }
+
+      // Lấy vùng giao hợp lý giữa box và landmarks mặt thật, giữ đúng tỷ lệ vuông quanh tâm mặt
+      let x1 = Math.max(0, Math.max(box.x, matchedMp.box.x - matchedMp.box.width * 0.08));
+      let y1 = Math.max(0, Math.max(box.y, matchedMp.box.y - matchedMp.box.height * 0.12));
+      let x2 = Math.min(sourceCanvas.width, Math.min(box.x + box.width, matchedMp.box.x + matchedMp.box.width * 1.08));
+      let y2 = Math.min(sourceCanvas.height, Math.min(box.y + box.height, matchedMp.box.y + matchedMp.box.height * 1.08));
+
+      // Kẹp biên tuyệt đối không cho phép chạm khung mặt khác
       for (const other of allBoxes) {
         if (other === box) continue;
         const ox1 = other.x, oy1 = other.y;
         const ox2 = other.x + other.width, oy2 = other.y + other.height;
-
         const overlapY = Math.min(y2, oy2) - Math.max(y1, oy1);
         const overlapX = Math.min(x2, ox2) - Math.max(x1, ox1);
 
         if (overlapY > 0) {
-          // Mặt khác nằm bên phải và lấn vào x2
-          if (ox1 > x1 && ox1 < x2) x2 = Math.max(x1 + 16, ox1 - 2);
-          // Mặt khác nằm bên trái và lấn vào x1
-          if (ox2 < x2 && ox2 > x1) x1 = Math.min(x2 - 16, ox2 + 2);
+          if (ox1 > x1 && ox1 < x2) x2 = Math.max(x1 + 20, ox1 - 3);
+          if (ox2 < x2 && ox2 > x1) x1 = Math.min(x2 - 20, ox2 + 3);
         }
         if (overlapX > 0) {
-          // Mặt khác nằm bên dưới và lấn vào y2
-          if (oy1 > y1 && oy1 < y2) y2 = Math.max(y1 + 16, oy1 - 2);
-          // Mặt khác nằm bên trên và lấn vào y1
-          if (oy2 < y2 && oy2 > y1) y1 = Math.min(y2 - 16, oy2 + 2);
+          if (oy1 > y1 && oy1 < y2) y2 = Math.max(y1 + 20, oy1 - 3);
+          if (oy2 < y2 && oy2 > y1) y1 = Math.min(y2 - 20, oy2 + 3);
         }
       }
 
-      const w = Math.max(16, Math.round(x2 - x1));
-      const h = Math.max(16, Math.round(y2 - y1));
-      const sx = Math.round(x1);
-      const sy = Math.round(y1);
+      const w = Math.round(x2 - x1);
+      const h = Math.round(y2 - y1);
+      if (w < 28 || h < 28) return null;
+
+      // Kiểm tra tỷ lệ khung hình mặt hợp lý (tránh dải dọc hẹp chỉ chứa tóc)
+      const aspect = w / h;
+      if (aspect < 0.55 || aspect > 1.75) return null;
 
       const out = document.createElement("canvas");
       out.width = outSize;
       out.height = outSize;
-      out.getContext("2d").drawImage(sourceCanvas, sx, sy, w, h, 0, 0, outSize, outSize);
+      out.getContext("2d").drawImage(sourceCanvas, Math.round(x1), Math.round(y1), w, h, 0, 0, outSize, outSize);
       const dataUrl = out.toDataURL("image/jpeg", 0.92);
-      out.width = 0;
-      out.height = 0;
-      return dataUrl;
+      out.width = 0; out.height = 0;
+      return { url: dataUrl, yaw: matchedMp.yaw };
     }
 
-    runBtn.addEventListener("click", async () => {
-      const files = Array.from(fileInput.files || []);
-      if (!files.length) {
-        setStatus("Hãy chọn 10-20 ảnh trước.", true);
+    function renderOriginalsRoll() {
+      if (!uploadedFilesLog.length) {
+        originalsRoll.innerHTML = `<span style="font-size:11px;color:var(--muted);">Chưa có ảnh gốc</span>`;
+        return;
+      }
+      originalsRoll.innerHTML = "";
+      uploadedFilesLog.forEach((item, idx) => {
+        const div = document.createElement("div");
+        div.className = "orig-thumb";
+        div.title = item.name;
+        div.innerHTML = `<img src="${item.thumbUrl}" /><span class="orig-idx">${idx + 1}</span>`;
+        div.onclick = () => {
+          detailImg.src = item.fullUrl;
+          detailInfo.textContent = `Ảnh gốc #${idx + 1}: ${item.name}`;
+          detailActions.style.display = "none";
+          detailModal.style.display = "flex";
+        };
+        originalsRoll.appendChild(div);
+      });
+    }
+
+    // Xử lý file tăng dần: chỉ quét và crop những file MỚI chưa từng xử lý trước đó
+    async function processIncrementalFiles(files, isExtra) {
+      uploadBtn.disabled = true;
+      extraUploadBtn.disabled = true;
+
+      const newFiles = files.filter(f => {
+        const key = `${f.name}_${f.size}_${f.lastModified}`;
+        return !processedFileKeys.has(key);
+      });
+
+      if (!newFiles.length) {
+        setStatus("Tất cả file chọn đều đã được upload & crop trước đó, không quét lại.");
+        uploadBtn.disabled = false;
+        extraUploadBtn.disabled = false;
         return;
       }
 
-      runBtn.disabled = true;
-      allFaces = [];
-      people = [];
-      unsureFaces = [];
-      scanStats = { scanned: 0, skipped: 0, skipReasons: [] };
-      let idSeq = 0;
+      const newlyExtractedFaces = [];
 
-      for (let i = 0; i < files.length; i++) {
-        setStatus(`Đang quét ảnh ${i + 1}/${files.length}...`);
+      for (let i = 0; i < newFiles.length; i++) {
+        const file = newFiles[i];
+        const fileKey = `${file.name}_${file.size}_${file.lastModified}`;
+        setStatus(`Đang quét ${isExtra ? "extra " : ""}ảnh mới ${i + 1}/${newFiles.length}...`);
         await new Promise(r => setTimeout(r, 10));
 
         try {
-          const canvas = await fileToCanvas(files[i], 1500);
-          const baseName = files[i].name.replace(/\.[^.]+$/, "");
+          const canvas = await fileToCanvas(file, 1500);
+          const baseName = file.name.replace(/\.[^.]+$/, "");
+
+          uploadedFilesLog.push({
+            key: fileKey,
+            name: file.name,
+            thumbUrl: makeThumbUrl(canvas, 84),
+            fullUrl: canvas.toDataURL("image/jpeg", 0.85)
+          });
+          processedFileKeys.add(fileKey);
+          renderOriginalsRoll();
 
           const mpRes = faceLandmarker ? faceLandmarker.detect(canvas) : null;
           const mpFaces = [];
@@ -766,8 +1042,8 @@
                 box: {
                   x: minX * canvas.width,
                   y: minY * canvas.height,
-                  width: Math.max(16, (maxX - minX) * canvas.width),
-                  height: Math.max(16, (maxY - minY) * canvas.height)
+                  width: (maxX - minX) * canvas.width,
+                  height: (maxY - minY) * canvas.height
                 },
                 yaw
               });
@@ -775,121 +1051,122 @@
           }
 
           const hRes = await human.detect(canvas);
-          const rawHumanFaces = hRes.face || [];
-
-          const validHumanFaces = [];
-          for (const f of rawHumanFaces) {
-            if (!f.box || f.box[2] < 38 || f.box[3] < 38) {
-              scanStats.skipped++;
-              scanStats.skipReasons.push("mặt quá nhỏ <38px");
-              continue;
-            }
-            if (!f.embedding || !f.embedding.length) {
-              scanStats.skipped++;
-              scanStats.skipReasons.push("thiếu vector đặc trưng");
-              continue;
-            }
-            validHumanFaces.push(f);
-          }
-
-          // Ghi nhận mặt MediaPipe thấy nhưng Human bỏ qua
-          if (mpFaces.length > validHumanFaces.length) {
-            const diff = mpFaces.length - validHumanFaces.length;
-            scanStats.skipped += diff;
-            for (let d = 0; d < diff; d++) scanStats.skipReasons.push("mặt mờ/khuất chỉ thấy ở landmarks");
-          }
-
-          const allBoxes = validHumanFaces.map(f => ({
-            x: f.box[0],
-            y: f.box[1],
-            width: f.box[2],
-            height: f.box[3]
+          const rawHuman = hRes.face || [];
+          const allBoxes = rawHuman.filter(f => f.box).map(f => ({
+            x: f.box[0], y: f.box[1], width: f.box[2], height: f.box[3]
           }));
 
-          validHumanFaces.forEach((f, idx) => {
-            const box = allBoxes[idx];
-            const cx = box.x + box.width / 2;
-            const cy = box.y + box.height / 2;
-
-            let yaw = f.rotation?.angle?.yaw ? Math.abs((f.rotation.angle.yaw * 180) / Math.PI) : 0;
-            let bestDist = Infinity;
-            for (const m of mpFaces) {
-              const d = Math.hypot(m.cx - cx, m.cy - cy);
-              if (d < bestDist && d < Math.max(box.width, box.height)) {
-                bestDist = d;
-                yaw = m.yaw;
-              }
+          rawHuman.forEach((f, idx) => {
+            if (!f.box || f.box[2] < 38 || f.box[3] < 38 || !f.embedding || !f.embedding.length) {
+              scanStats.skipped++;
+              return;
+            }
+            const box = { x: f.box[0], y: f.box[1], width: f.box[2], height: f.box[3] };
+            const cropped = cropVerifiedFaceBox(canvas, box, allBoxes, mpFaces, 240);
+            if (!cropped) {
+              // Bỏ qua các vùng detection giả (tóc, tay, cổ áo) không có landmarks mặt thật
+              scanStats.skipped++;
+              return;
             }
 
             idSeq++;
             scanStats.scanned++;
-            const faceUrl = cropStrictlyInsideFaceBox(canvas, box, allBoxes, 240);
-            allFaces.push({
+            const faceObj = {
               id: `f_${idSeq}`,
-              url: faceUrl,
+              url: cropped.url,
               fileName: `${baseName}_m${idx + 1}.jpg`,
               embedding: l2Normalize(f.embedding),
               score: f.faceScore || f.boxScore || 0.5,
-              yaw,
+              yaw: cropped.yaw,
               strikes: 0,
               excludedIds: new Set(),
-              manualSuspect: false,
               reason: ""
-            });
+            };
+            allFaces.push(faceObj);
+            newlyExtractedFaces.push(faceObj);
           });
 
-          canvas.width = 0;
-          canvas.height = 0;
+          canvas.width = 0; canvas.height = 0;
         } catch (err) {
           console.warn(err);
         }
       }
 
-      clusterExclusive();
-      runBtn.disabled = false;
-      updateSummaryStatus();
-    });
+      if (isExtra) {
+        // Chỉ gom nhóm các mặt MỚI vừa upload vào nhóm hiện tại hoặc tạo nhóm mới, không đụng mặt cũ đã sắp xếp
+        assignIncrementalFaces(newlyExtractedFaces);
+      } else {
+        clusterWorkingFacesOnly();
+      }
 
-    function updateSummaryStatus() {
-      const totalFacesCount = allFaces.length;
-      const maxAllowedPeople = Math.max(1, Math.floor((totalFacesCount * 2) / 3));
-      const skipDetail = scanStats.skipped > 0
-        ? ` (bỏ qua ${scanStats.skipped} mặt mờ/nhỏ)`
-        : "";
-      setStatus(
-        `Đã scan: ${scanStats.scanned} mặt • Bỏ qua: ${scanStats.skipped} mặt${skipDetail} • Nhóm: ${people.length}/${maxAllowedPeople} người • Unsure: ${unsureFaces.length}`
-      );
+      uploadBtn.disabled = false;
+      extraUploadBtn.disabled = false;
+      updateSummaryStatus();
+      queueDatabaseMatchProposals(newlyExtractedFaces);
     }
 
-    function clusterExclusive() {
+    function assignIncrementalFaces(newFaces) {
+      const simTh = parseFloat(simThresholdEl.value) / 100;
+      const maxYaw = parseFloat(maxYawEl.value);
+      const maxPeopleLimit = Math.max(1, Math.floor((allFaces.length * 2) / 3));
+
+      for (const f of newFaces) {
+        if (f.yaw > maxYaw) {
+          f.reason = `Nghiêng ~${Math.round(f.yaw)}° > ${maxYaw}°`;
+          unsureFaces.push(f);
+          continue;
+        }
+
+        let bestIdx = -1;
+        let bestSim = simTh;
+        for (let i = 0; i < people.length; i++) {
+          if (!people[i].centroid) continue;
+          const s = similarityToPerson(f.embedding, people[i]);
+          if (s >= simTh && s > bestSim) {
+            bestSim = s;
+            bestIdx = i;
+          }
+        }
+
+        if (bestIdx >= 0) {
+          people[bestIdx].faces.push(f);
+          people[bestIdx].embs.push(f.embedding);
+          people[bestIdx].centroid = calcNormalizedCentroid(people[bestIdx].embs);
+        } else if (people.length < maxPeopleLimit) {
+          people.push({
+            id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+            name: `N${people.length + 1}`,
+            centroid: f.embedding,
+            embs: [f.embedding],
+            faces: [f]
+          });
+        } else {
+          f.reason = "Chạm trần số nhóm (≤ 2/3 số mặt)";
+          unsureFaces.push(f);
+        }
+      }
+
+      renderWorkingUI();
+    }
+
+    // Gom nhóm độc lập cho khu vực làm việc (KHÔNG bao giờ chạm vào savedDBPeople đã khóa)
+    function clusterWorkingFacesOnly() {
       const simTh = parseFloat(simThresholdEl.value) / 100;
       const maxYaw = parseFloat(maxYawEl.value);
 
       const permanentUnsure = unsureFaces.filter(f => f.strikes >= 3);
       unsureFaces = [...permanentUnsure];
-      people = [];
+      const manualEmptyGroups = people.filter(p => p.faces.length === 0);
+      people = [...manualEmptyGroups];
 
       const candidates = [];
       for (const f of allFaces) {
-        if (f.strikes >= 3) continue;
+        if (f.strikes >= 3 || f.mergedToSavedDB) continue;
         if (f.yaw > maxYaw) {
           unsureFaces.push({ ...f, reason: `Nghiêng ~${Math.round(f.yaw)}° > ${maxYaw}°` });
           continue;
         }
         candidates.push(f);
-      }
-
-      // Ưu tiên khớp trước với các người đã lưu trong DB (nếu có)
-      for (const kPerson of knownDB) {
-        people.push({
-          id: `db_${kPerson.name}`,
-          name: kPerson.name,
-          centroid: kPerson.centroid,
-          embs: [...kPerson.samples],
-          faces: [],
-          fromDB: true,
-          confirmed: true
-        });
       }
 
       candidates.sort((a, b) => b.score - a.score);
@@ -900,7 +1177,7 @@
         let bestSim = simTh;
 
         for (let i = 0; i < people.length; i++) {
-          if (f.excludedIds.has(people[i].id)) continue;
+          if (f.excludedIds.has(people[i].id) || !people[i].centroid) continue;
           const sim = similarityToPerson(f.embedding, people[i]);
           if (sim >= simTh && sim > bestSim) {
             bestSim = sim;
@@ -912,58 +1189,131 @@
           people[bestIdx].faces.push(f);
           people[bestIdx].embs.push(f.embedding);
           people[bestIdx].centroid = calcNormalizedCentroid(people[bestIdx].embs);
+        } else if (people.length < maxPeopleLimit) {
+          people.push({
+            id: `p_${people.length + 1}_${Math.random().toString(36).slice(2, 6)}`,
+            name: `N${people.length + 1}`,
+            centroid: f.embedding,
+            embs: [f.embedding],
+            faces: [f]
+          });
         } else {
-          // Ràng buộc giới hạn tổng số người m <= n * 2/3
-          const activePeopleCount = people.filter(p => p.faces.length > 0).length;
-          if (activePeopleCount < maxPeopleLimit) {
-            people.push({
-              id: `p_${people.length + 1}_${Math.random().toString(36).slice(2, 6)}`,
-              name: `N${activePeopleCount + 1}`,
-              centroid: f.embedding,
-              embs: [f.embedding],
-              faces: [f],
-              fromDB: false,
-              confirmed: false
-            });
-          } else {
-            // Nếu đã chạm trần m = n*2/3, tìm người giống nhất nếu >= (simTh - 0.08), không thì đưa vào Unsure
-            let fallbackIdx = -1;
-            let fallbackSim = Math.max(0.50, simTh - 0.08);
-            for (let i = 0; i < people.length; i++) {
-              if (f.excludedIds.has(people[i].id)) continue;
-              const s = similarityToPerson(f.embedding, people[i]);
-              if (s > fallbackSim) {
-                fallbackSim = s;
-                fallbackIdx = i;
-              }
-            }
-            if (fallbackIdx >= 0) {
-              people[fallbackIdx].faces.push(f);
-              people[fallbackIdx].embs.push(f.embedding);
-              people[fallbackIdx].centroid = calcNormalizedCentroid(people[fallbackIdx].embs);
-            } else {
-              f.reason = `Chạm trần ${maxPeopleLimit} người (≤ 2/3 số mặt)`;
-              unsureFaces.push(f);
-            }
-          }
+          f.reason = `Chạm trần ${maxPeopleLimit} người (≤ 2/3 số mặt)`;
+          unsureFaces.push(f);
         }
       }
 
-      // Loại bỏ các khung DB rỗng không có mặt nào trong batch này
-      people = people.filter(p => p.faces.length > 0);
       people.sort((a, b) => b.faces.length - a.faces.length);
-      let autoIdx = 1;
+      let idxLabel = 1;
       people.forEach(p => {
-        if (!p.fromDB && /^N\d+$/.test(p.name)) {
-          p.name = `N${autoIdx++}`;
-        }
+        if (/^N\d+$/.test(p.name)) p.name = `N${idxLabel++}`;
       });
 
-      renderUI();
+      renderWorkingUI();
       updateSummaryStatus();
     }
 
-    // Khi bấm nút Xoá: tính người gần giống nhất (trừ nhóm hiện tại và nhóm đã loại trừ), mở modal so sánh Yes/No
+    // Kiểm tra nếu mặt/nhóm mới giống với người đã Confirm Save trong DB -> đề xuất gom và confirm
+    function queueDatabaseMatchProposals(targetFaces) {
+      if (!savedDBPeople.length || !targetFaces.length) return;
+      const dbMatchTh = Math.max(0.68, (parseFloat(simThresholdEl.value) / 100) - 0.03);
+      dbMatchProposals = [];
+
+      // Kiểm tra từng nhóm mới trước
+      for (const p of people) {
+        if (!p.centroid || !p.faces.length) continue;
+        let bestDb = null;
+        let bestSim = dbMatchTh;
+        for (const dbP of savedDBPeople) {
+          const s = similarityToPerson(p.centroid, dbP);
+          if (s >= dbMatchTh && s > bestSim) {
+            bestSim = s;
+            bestDb = dbP;
+          }
+        }
+        if (bestDb) {
+          dbMatchProposals.push({
+            type: "group_to_db",
+            workingPersonId: p.id,
+            dbPersonId: bestDb.id,
+            sim: bestSim
+          });
+        }
+      }
+
+      if (dbMatchProposals.length > 0) {
+        showNextDbProposal();
+      }
+    }
+
+    function showNextDbProposal() {
+      if (!dbMatchProposals.length) return;
+      const prop = dbMatchProposals.shift();
+      const wP = people.find(p => p.id === prop.workingPersonId);
+      const dbP = savedDBPeople.find(p => p.id === prop.dbPersonId);
+      if (!wP || !dbP || !wP.faces.length) {
+        showNextDbProposal();
+        return;
+      }
+
+      const pct = Math.round(prop.sim * 100);
+      pendingModalAction = {
+        mode: "merge_to_db",
+        workingPersonId: wP.id,
+        dbPersonId: dbP.id
+      };
+
+      cmpTitle.textContent = "Phát hiện trùng với người đã lưu trong Database";
+      cmpSrcImg.src = wP.faces[0]?.url || "";
+      cmpSrcLabel.textContent = `Nhóm mới: ${wP.name} (${wP.faces.length} mặt)`;
+      cmpDstImg.src = dbP.faces[0]?.url || "";
+      cmpDstLabel.textContent = `DB: ${dbP.name} (${dbP.faces.length} mặt)`;
+      cmpSimPct.textContent = `${pct}%`;
+      cmpDesc.textContent = `Nhóm "${wP.name}" giống ${pct}% với "${dbP.name}" đã lưu trong Database. Bạn có muốn gom các mặt này vào "${dbP.name}" không?`;
+      confirmMoveModal.style.display = "flex";
+    }
+
+    function updateSummaryStatus() {
+      const maxAllowed = Math.max(1, Math.floor((allFaces.length * 2) / 3));
+      setStatus(
+        `Đã scan: ${scanStats.scanned} mặt • Bỏ qua: ${scanStats.skipped} mặt • Nhóm mới: ${people.length}/${maxAllowed} • Unsure: ${unsureFaces.length} • DB khóa: ${savedDBPeople.length}`
+      );
+    }
+
+    // Confirm Save 1 người -> chuyển thẳng xuống khung Bottom Database và khóa bảo vệ
+    async function confirmSavePersonToBottomDB(personIdx) {
+      const p = people[personIdx];
+      if (!p || !p.faces.length) return;
+
+      const cleanName = p.name.trim();
+      let existingDb = savedDBPeople.find(d => d.name.toLowerCase() === cleanName.toLowerCase());
+
+      if (existingDb) {
+        for (const f of p.faces) {
+          f.mergedToSavedDB = true;
+          existingDb.faces.push({ id: f.id, url: f.url, fileName: f.fileName });
+          if (f.embedding) existingDb.embs.push(f.embedding);
+        }
+        existingDb.centroid = calcNormalizedCentroid(existingDb.embs);
+        await persistSavedPerson(existingDb);
+      } else {
+        const newDbPerson = {
+          id: `db_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          name: cleanName,
+          embs: p.faces.filter(f => f.embedding).map(f => f.embedding),
+          faces: p.faces.map(f => ({ id: f.id, url: f.url, fileName: f.fileName }))
+        };
+        p.faces.forEach(f => { f.mergedToSavedDB = true; });
+        await persistSavedPerson(newDbPerson);
+      }
+
+      people.splice(personIdx, 1);
+      renderWorkingUI();
+      updateSummaryStatus();
+      setStatus(`Đã lưu & khóa "${cleanName}" vào khung Database cuối trang.`);
+    }
+
+    // Bấm nút Xoá: đề xuất chuyển sang người gần giống nhất (Yes/No), đủ 3 lần mới đưa vào Unsure
     window.proposeReassignOnDelete = function(personIdx, faceId) {
       const srcPerson = people[personIdx];
       if (!srcPerson) return;
@@ -973,135 +1323,187 @@
       const face = srcPerson.faces[fIdx];
       const nextStrikes = (face.strikes || 0) + 1;
 
-      // Nếu đã bị xoá đủ 3 lần -> đưa thẳng vào Unsure
       if (nextStrikes >= 3) {
         srcPerson.faces.splice(fIdx, 1);
         face.strikes = 3;
         face.excludedIds.add(srcPerson.id);
         face.reason = "Đã bị xoá 3 lần";
-        recalcPersonGroup(personIdx);
+        recalcWorkingGroup(personIdx);
         unsureFaces.push(face);
-        renderUI();
+        renderWorkingUI();
         updateSummaryStatus();
         return;
       }
 
-      // Tìm người chưa bị xoá có tỷ lệ giống cao nhất
-      let bestTargetIdx = -1;
+      // Tìm người chưa bị xoá gần giống nhất (xét cả nhóm mới và người đã lưu DB)
+      let bestCandidate = null;
       let bestSim = -1;
+
       for (let i = 0; i < people.length; i++) {
         if (i === personIdx) continue;
-        if (face.excludedIds.has(people[i].id)) continue;
-        const sim = similarityToPerson(face.embedding, people[i]);
-        if (sim > bestSim) {
-          bestSim = sim;
-          bestTargetIdx = i;
+        if (face.excludedIds.has(people[i].id) || !people[i].centroid) continue;
+        const s = similarityToPerson(face.embedding, people[i]);
+        if (s > bestSim) {
+          bestSim = s;
+          bestCandidate = { isDB: false, person: people[i] };
+        }
+      }
+      for (const dbP of savedDBPeople) {
+        if (face.excludedIds.has(dbP.id)) continue;
+        const s = similarityToPerson(face.embedding, dbP);
+        if (s > bestSim) {
+          bestSim = s;
+          bestCandidate = { isDB: true, person: dbP };
         }
       }
 
-      if (bestTargetIdx < 0) {
-        // Không còn người nào khác để đề xuất -> loại khỏi nhóm hiện tại và đưa tạm vào Unsure
+      if (!bestCandidate) {
         srcPerson.faces.splice(fIdx, 1);
         face.strikes = nextStrikes;
         face.excludedIds.add(srcPerson.id);
-        face.reason = `Xoá ${face.strikes}/3 (không còn nhóm đối chiếu)`;
-        recalcPersonGroup(personIdx);
+        face.reason = `Xoá ${face.strikes}/3`;
+        recalcWorkingGroup(personIdx);
         unsureFaces.push(face);
-        renderUI();
+        renderWorkingUI();
         updateSummaryStatus();
         return;
       }
 
-      const targetPerson = people[bestTargetIdx];
       const pct = Math.max(0, Math.round(bestSim * 100));
-
-      pendingProposal = {
+      pendingModalAction = {
+        mode: "delete_reassign",
         srcPersonId: srcPerson.id,
-        dstPersonId: targetPerson.id,
+        dstPersonId: bestCandidate.person.id,
+        dstIsDB: bestCandidate.isDB,
         faceId: face.id
       };
 
+      cmpTitle.textContent = "Đề xuất chuyển sang người gần giống nhất";
       cmpSrcImg.src = face.url;
       cmpSrcLabel.textContent = `Từ ${srcPerson.name} (lần ${nextStrikes}/3)`;
-      cmpDstImg.src = targetPerson.faces[0]?.url || "";
-      cmpDstLabel.textContent = `${targetPerson.name} (${targetPerson.faces.length} mặt)`;
+      cmpDstImg.src = bestCandidate.person.faces[0]?.url || "";
+      cmpDstLabel.textContent = `${bestCandidate.isDB ? "[DB] " : ""}${bestCandidate.person.name}`;
       cmpSimPct.textContent = `${pct}%`;
-      cmpDesc.textContent = `Khả năng cao mặt này thuộc về "${targetPerson.name}" (giống ${pct}%). Bấm Yes để chuyển sang "${targetPerson.name}", hoặc No để loại trừ cả 2 người này.`;
+      cmpDesc.textContent = `Mặt này giống "${bestCandidate.person.name}" (${pct}%). Bấm Yes để chuyển sang, hoặc No để loại trừ.`;
       confirmMoveModal.style.display = "flex";
     };
 
     window.closeConfirmModal = function() {
       confirmMoveModal.style.display = "none";
-      pendingProposal = null;
+      pendingModalAction = null;
+      if (dbMatchProposals.length > 0) {
+        setTimeout(showNextDbProposal, 120);
+      }
     };
 
-    cmpYesBtn.addEventListener("click", () => {
-      if (!pendingProposal) return;
-      const srcIdx = people.findIndex(p => p.id === pendingProposal.srcPersonId);
-      const dstIdx = people.findIndex(p => p.id === pendingProposal.dstPersonId);
-      if (srcIdx < 0 || dstIdx < 0) { closeConfirmModal(); return; }
+    cmpYesBtn.addEventListener("click", async () => {
+      if (!pendingModalAction) return;
+      const act = pendingModalAction;
 
-      const fIdx = people[srcIdx].faces.findIndex(x => x.id === pendingProposal.faceId);
-      if (fIdx < 0) { closeConfirmModal(); return; }
+      if (act.mode === "merge_to_db") {
+        const wIdx = people.findIndex(p => p.id === act.workingPersonId);
+        const dbP = savedDBPeople.find(p => p.id === act.dbPersonId);
+        if (wIdx >= 0 && dbP) {
+          const wP = people[wIdx];
+          for (const f of wP.faces) {
+            f.mergedToSavedDB = true;
+            dbP.faces.push({ id: f.id, url: f.url, fileName: f.fileName });
+            if (f.embedding) dbP.embs.push(f.embedding);
+          }
+          dbP.centroid = calcNormalizedCentroid(dbP.embs);
+          await persistSavedPerson(dbP);
+          people.splice(wIdx, 1);
+          renderWorkingUI();
+          updateSummaryStatus();
+        }
+        closeConfirmModal();
+        return;
+      }
 
-      const [face] = people[srcIdx].faces.splice(fIdx, 1);
-      face.strikes = (face.strikes || 0) + 1;
-      face.excludedIds.add(people[srcIdx].id);
+      if (act.mode === "delete_reassign") {
+        const srcIdx = people.findIndex(p => p.id === act.srcPersonId);
+        if (srcIdx < 0) { closeConfirmModal(); return; }
+        const fIdx = people[srcIdx].faces.findIndex(x => x.id === act.faceId);
+        if (fIdx < 0) { closeConfirmModal(); return; }
 
-      people[dstIdx].faces.push(face);
-      people[dstIdx].embs.push(face.embedding);
-      people[dstIdx].centroid = calcNormalizedCentroid(people[dstIdx].embs);
+        const [face] = people[srcIdx].faces.splice(fIdx, 1);
+        face.strikes = (face.strikes || 0) + 1;
+        face.excludedIds.add(people[srcIdx].id);
+        recalcWorkingGroup(srcIdx);
 
-      recalcPersonGroup(srcIdx);
-      closeConfirmModal();
-      renderUI();
-      updateSummaryStatus();
+        if (act.dstIsDB) {
+          const dbP = savedDBPeople.find(p => p.id === act.dstPersonId);
+          if (dbP) {
+            face.mergedToSavedDB = true;
+            dbP.faces.push({ id: face.id, url: face.url, fileName: face.fileName });
+            if (face.embedding) dbP.embs.push(face.embedding);
+            dbP.centroid = calcNormalizedCentroid(dbP.embs);
+            await persistSavedPerson(dbP);
+          }
+        } else {
+          const dstIdx = people.findIndex(p => p.id === act.dstPersonId);
+          if (dstIdx >= 0) {
+            people[dstIdx].faces.push(face);
+            people[dstIdx].embs.push(face.embedding);
+            people[dstIdx].centroid = calcNormalizedCentroid(people[dstIdx].embs);
+          }
+        }
+
+        renderWorkingUI();
+        updateSummaryStatus();
+        closeConfirmModal();
+      }
     });
 
     cmpNoBtn.addEventListener("click", () => {
-      if (!pendingProposal) return;
-      const srcIdx = people.findIndex(p => p.id === pendingProposal.srcPersonId);
-      const dstIdx = people.findIndex(p => p.id === pendingProposal.dstPersonId);
-      if (srcIdx < 0) { closeConfirmModal(); return; }
+      if (!pendingModalAction) return;
+      const act = pendingModalAction;
 
-      const fIdx = people[srcIdx].faces.findIndex(x => x.id === pendingProposal.faceId);
-      if (fIdx < 0) { closeConfirmModal(); return; }
-
-      const [face] = people[srcIdx].faces.splice(fIdx, 1);
-      face.strikes = (face.strikes || 0) + 1;
-      face.excludedIds.add(people[srcIdx].id);
-      if (dstIdx >= 0) face.excludedIds.add(people[dstIdx].id);
-
-      recalcPersonGroup(srcIdx);
-
-      // Tìm người tiếp theo nếu chưa đủ 3 lần xoá
-      if (face.strikes < 3) {
-        let nextIdx = -1;
-        let nextSim = 0.52;
-        for (let i = 0; i < people.length; i++) {
-          if (face.excludedIds.has(people[i].id)) continue;
-          const s = similarityToPerson(face.embedding, people[i]);
-          if (s > nextSim) { nextSim = s; nextIdx = i; }
-        }
-        if (nextIdx >= 0) {
-          people[nextIdx].faces.push(face);
-          people[nextIdx].embs.push(face.embedding);
-          people[nextIdx].centroid = calcNormalizedCentroid(people[nextIdx].embs);
-        } else {
-          face.reason = `Đã xoá ${face.strikes}/3`;
-          unsureFaces.push(face);
-        }
-      } else {
-        face.reason = "Đã bị xoá 3 lần";
-        unsureFaces.push(face);
+      if (act.mode === "merge_to_db") {
+        closeConfirmModal();
+        return;
       }
 
-      closeConfirmModal();
-      renderUI();
-      updateSummaryStatus();
+      if (act.mode === "delete_reassign") {
+        const srcIdx = people.findIndex(p => p.id === act.srcPersonId);
+        if (srcIdx < 0) { closeConfirmModal(); return; }
+        const fIdx = people[srcIdx].faces.findIndex(x => x.id === act.faceId);
+        if (fIdx < 0) { closeConfirmModal(); return; }
+
+        const [face] = people[srcIdx].faces.splice(fIdx, 1);
+        face.strikes = (face.strikes || 0) + 1;
+        face.excludedIds.add(people[srcIdx].id);
+        face.excludedIds.add(act.dstPersonId);
+        recalcWorkingGroup(srcIdx);
+
+        if (face.strikes >= 3) {
+          face.reason = "Đã bị xoá 3 lần";
+          unsureFaces.push(face);
+        } else {
+          let nextIdx = -1;
+          let nextSim = 0.54;
+          for (let i = 0; i < people.length; i++) {
+            if (face.excludedIds.has(people[i].id) || !people[i].centroid) continue;
+            const s = similarityToPerson(face.embedding, people[i]);
+            if (s > nextSim) { nextSim = s; nextIdx = i; }
+          }
+          if (nextIdx >= 0) {
+            people[nextIdx].faces.push(face);
+            people[nextIdx].embs.push(face.embedding);
+            people[nextIdx].centroid = calcNormalizedCentroid(people[nextIdx].embs);
+          } else {
+            face.reason = `Xoá ${face.strikes}/3`;
+            unsureFaces.push(face);
+          }
+        }
+
+        renderWorkingUI();
+        updateSummaryStatus();
+        closeConfirmModal();
+      }
     });
 
-    function recalcPersonGroup(idx) {
+    function recalcWorkingGroup(idx) {
       const p = people[idx];
       if (!p) return;
       if (p.faces.length === 0) {
@@ -1112,7 +1514,7 @@
       }
     }
 
-    function mergePerson(fromIdx, toIdx) {
+    function mergeWorkingPerson(fromIdx, toIdx) {
       if (fromIdx === toIdx || !people[fromIdx] || !people[toIdx]) return;
       const src = people[fromIdx];
       const dst = people[toIdx];
@@ -1124,19 +1526,18 @@
           dst.embs.push(f.embedding);
         }
       }
-      dst.centroid = calcNormalizedCentroid(dst.embs);
+      if (dst.embs.length) dst.centroid = calcNormalizedCentroid(dst.embs);
       people.splice(fromIdx, 1);
-      renderUI();
+      renderWorkingUI();
       updateSummaryStatus();
     }
 
-    // Re-check unsure bằng lật ngang (horizontal flip) & đối chiếu với toàn bộ mặt của từng người
     recheckUnsureBtn.addEventListener("click", async () => {
       if (!unsureFaces.length) return;
       recheckUnsureBtn.disabled = true;
 
       const stillUnsure = [];
-      const relaxedSim = Math.max(0.54, (parseFloat(simThresholdEl.value) / 100) - 0.08);
+      const relaxedSim = Math.max(0.55, (parseFloat(simThresholdEl.value) / 100) - 0.08);
 
       for (const f of unsureFaces) {
         if (f.strikes >= 3) {
@@ -1152,21 +1553,19 @@
           });
 
           const flipC = document.createElement("canvas");
-          flipC.width = 240;
-          flipC.height = 240;
+          flipC.width = 240; flipC.height = 240;
           const ctx = flipC.getContext("2d");
           ctx.translate(240, 0);
           ctx.scale(-1, 1);
           ctx.drawImage(im, 0, 0, 240, 240);
           const resFlip = await human.detect(flipC);
           const embFlip = resFlip.face?.[0]?.embedding ? l2Normalize(resFlip.face[0].embedding) : null;
-          flipC.width = 0;
-          flipC.height = 0;
+          flipC.width = 0; flipC.height = 0;
 
           let bestIdx = -1;
           let bestS = relaxedSim;
           for (let i = 0; i < people.length; i++) {
-            if (f.excludedIds && f.excludedIds.has(people[i].id)) continue;
+            if ((f.excludedIds && f.excludedIds.has(people[i].id)) || !people[i].centroid) continue;
             const s1 = similarityToPerson(f.embedding, people[i]);
             const s2 = embFlip ? similarityToPerson(embFlip, people[i]) : 0;
             const s = Math.max(s1, s2);
@@ -1187,12 +1586,12 @@
 
       unsureFaces = stillUnsure;
       recheckUnsureBtn.disabled = false;
-      renderUI();
+      renderWorkingUI();
       updateSummaryStatus();
     });
 
-    function renderUI() {
-      // Render thanh Unsure trên cùng
+    function renderWorkingUI() {
+      // Unsure strip
       unsureBadge.textContent = unsureFaces.length;
       unsureGrid.innerHTML = "";
       unsureFaces.forEach(f => {
@@ -1206,13 +1605,11 @@
         unsureGrid.appendChild(div);
       });
 
-      // Render lưới 2 cột Người
+      // Working people grid (2 cột)
       peopleGrid.innerHTML = "";
-      const simTh = parseFloat(simThresholdEl.value) / 100;
-
       people.forEach((p, idx) => {
         const card = document.createElement("div");
-        card.className = `person-card ${p.confirmed ? "confirmed" : ""}`;
+        card.className = "person-card";
 
         const opts = people
           .map((other, oIdx) => oIdx === idx ? "" : `<option value="${oIdx}">→ ${other.name}</option>`)
@@ -1222,7 +1619,7 @@
           <div class="person-head">
             <img class="avatar" src="${p.faces[0]?.url || ""}" />
             <input class="name-compact" value="${p.name}" />
-            <button class="confirm-btn" title="Lưu người này vào DB">${p.confirmed ? "✓" : "Lưu"}</button>
+            <button class="confirm-btn" title="Confirm & Save xuống DB cuối trang">Lưu</button>
             <span class="cnt-pill">${p.faces.length}</span>
           </div>
           <div class="merge-mini">
@@ -1234,34 +1631,24 @@
 
         card.querySelector(".name-compact").addEventListener("change", (e) => {
           p.name = e.target.value.trim() || `N${idx + 1}`;
-          p.confirmed = false;
-          renderUI();
+          renderWorkingUI();
         });
 
-        card.querySelector(".confirm-btn").addEventListener("click", async () => {
-          p.confirmed = true;
-          p.fromDB = true;
-          await savePersonToDB(p);
-          renderUI();
-          setStatus(`Đã lưu "${p.name}" (${p.faces.length} mặt) vào DB local cho lần quét sau.`);
+        card.querySelector(".confirm-btn").addEventListener("click", () => {
+          confirmSavePersonToBottomDB(idx);
         });
 
         card.querySelector(".m-btn").addEventListener("click", () => {
           const t = parseInt(card.querySelector(".m-sel").value, 10);
-          if (!Number.isNaN(t)) mergePerson(idx, t);
+          if (!Number.isNaN(t)) mergeWorkingPerson(idx, t);
         });
 
         const sub = card.querySelector(".faces-subgrid");
         p.faces.forEach(f => {
-          // Chỉ đánh dấu chấm vàng nghi ngờ nếu mặt KHÔNG được chuyển thủ công và tỷ lệ giống toàn nhóm < ngưỡng
-          const simAll = similarityToPerson(f.embedding, p);
-          const isSuspect = !f.manualConfirmed && simAll < simTh;
-
           const item = document.createElement("div");
           item.className = "face-item";
           item.innerHTML = `
             <img src="${f.url}" />
-            ${isSuspect ? `<span class="suspect-dot" title="Giống ${Math.round(simAll * 100)}%"></span>` : ""}
             <button class="del-x" title="Xoá & đề xuất chuyển">×</button>
             ${f.strikes > 0 ? `<span class="strike-tag">${f.strikes}/3</span>` : ""}
           `;
@@ -1277,6 +1664,42 @@
       });
     }
 
+    // Khung Bottom hiển thị các Người đã Confirm Save trong DB (khóa bảo vệ)
+    function renderSavedDBSection() {
+      savedPeopleGrid.innerHTML = "";
+      if (!savedDBPeople.length) {
+        savedPeopleGrid.innerHTML = `<div style="font-size:11.5px;color:var(--muted);grid-column:1/-1;">Chưa có người nào được Confirm Save. Đặt tên nhóm ở trên và bấm "Lưu" để khóa xuống đây.</div>`;
+        return;
+      }
+
+      savedDBPeople.forEach(dbP => {
+        const card = document.createElement("div");
+        card.className = "saved-card";
+        card.innerHTML = `
+          <div class="person-head">
+            <img class="avatar" src="${dbP.faces[0]?.url || ""}" style="border-color:var(--ok);" />
+            <strong style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${dbP.name}</strong>
+            <span class="lock-badge">DB • ${dbP.faces.length}</span>
+          </div>
+          <div class="faces-subgrid"></div>
+        `;
+        const sub = card.querySelector(".faces-subgrid");
+        dbP.faces.forEach(f => {
+          const item = document.createElement("div");
+          item.className = "face-item";
+          item.innerHTML = `<img src="${f.url}" />`;
+          item.querySelector("img").onclick = () => {
+            detailImg.src = f.url;
+            detailInfo.textContent = `[DB Đã khóa] ${dbP.name} • ${f.fileName}`;
+            detailActions.style.display = "none";
+            detailModal.style.display = "flex";
+          };
+          sub.appendChild(item);
+        });
+        savedPeopleGrid.appendChild(card);
+      });
+    }
+
     window.openDetailModal = function(source, personIdx, faceId) {
       const face = source === "person"
         ? people[personIdx]?.faces.find(x => x.id === faceId)
@@ -1285,17 +1708,24 @@
 
       detailCtx = { source, personIdx, faceId };
       detailImg.src = face.url;
+      detailActions.style.display = "flex";
+
       let simText = "";
-      if (source === "person" && people[personIdx]) {
+      if (source === "person" && people[personIdx]?.centroid) {
         const pct = Math.round(similarityToPerson(face.embedding, people[personIdx]) * 100);
         simText = ` • Giống nhóm: ${pct}%`;
       }
       detailInfo.textContent = `${face.fileName} • Nghiêng ~${Math.round(face.yaw || 0)}°${simText} • Xoá: ${face.strikes}/3 ${face.reason ? "• " + face.reason : ""}`;
 
-      moveTargetSelect.innerHTML = people
-        .map((p, i) => (source === "person" && i === personIdx) ? "" : `<option value="${i}">${p.name} (${p.faces.length})</option>`)
+      // Cho phép chuyển thủ công vào cả nhóm đang làm việc lẫn người đã lưu trong DB
+      const workingOpts = people
+        .map((p, i) => (source === "person" && i === personIdx) ? "" : `<option value="w:${i}">${p.name} (${p.faces.length})</option>`)
+        .join("");
+      const dbOpts = savedDBPeople
+        .map(dbP => `<option value="db:${dbP.id}">[DB] ${dbP.name} (${dbP.faces.length})</option>`)
         .join("");
 
+      moveTargetSelect.innerHTML = workingOpts + dbOpts;
       removeStrikeBtn.style.display = source === "person" ? "inline-block" : "none";
       detailModal.style.display = "flex";
     };
@@ -1305,10 +1735,10 @@
       detailCtx = null;
     };
 
-    moveTargetBtn.addEventListener("click", () => {
+    moveTargetBtn.addEventListener("click", async () => {
       if (!detailCtx) return;
-      const targetIdx = parseInt(moveTargetSelect.value, 10);
-      if (Number.isNaN(targetIdx) || !people[targetIdx]) return;
+      const val = moveTargetSelect.value;
+      if (!val) return;
 
       let face = null;
       if (detailCtx.source === "person") {
@@ -1316,7 +1746,7 @@
         const i = srcP.faces.findIndex(x => x.id === detailCtx.faceId);
         if (i >= 0) {
           [face] = srcP.faces.splice(i, 1);
-          recalcPersonGroup(detailCtx.personIdx);
+          recalcWorkingGroup(detailCtx.personIdx);
         }
       } else {
         const i = unsureFaces.findIndex(x => x.id === detailCtx.faceId);
@@ -1324,15 +1754,28 @@
       }
 
       if (face) {
-        // Khi người dùng chuyển thủ công -> xác nhận thủ công và thêm vào tập embedding của người đích
-        face.manualConfirmed = true;
-        const safeIdx = Math.min(targetIdx, people.length - 1);
-        people[safeIdx].faces.push(face);
-        people[safeIdx].embs.push(face.embedding);
-        people[safeIdx].centroid = calcNormalizedCentroid(people[safeIdx].embs);
+        if (val.startsWith("db:")) {
+          const dbId = val.slice(3);
+          const dbP = savedDBPeople.find(d => d.id === dbId);
+          if (dbP) {
+            face.mergedToSavedDB = true;
+            dbP.faces.push({ id: face.id, url: face.url, fileName: face.fileName });
+            if (face.embedding) dbP.embs.push(face.embedding);
+            dbP.centroid = calcNormalizedCentroid(dbP.embs);
+            await persistSavedPerson(dbP);
+          }
+        } else if (val.startsWith("w:")) {
+          const targetIdx = parseInt(val.slice(2), 10);
+          if (people[targetIdx]) {
+            people[targetIdx].faces.push(face);
+            if (face.embedding) people[targetIdx].embs.push(face.embedding);
+            people[targetIdx].centroid = calcNormalizedCentroid(people[targetIdx].embs);
+          }
+        }
       }
+
       closeDetailModal();
-      renderUI();
+      renderWorkingUI();
       updateSummaryStatus();
     });
 
