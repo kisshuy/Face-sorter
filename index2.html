@@ -1,0 +1,1347 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Face Sorter v7 — Local DB & Smart Reassign</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/human/dist/human.js"></script>
+  <script type="module">
+    import { FilesetResolver, FaceLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+    window.__MP_VISION__ = { FilesetResolver, FaceLandmarker };
+  </script>
+  <style>
+    :root {
+      --bg: #eef1f5;
+      --card: #ffffff;
+      --text: #18202c;
+      --muted: #5c6778;
+      --accent: #0f62fe;
+      --accent-soft: #e6efff;
+      --ok: #15803d;
+      --ok-soft: #dcfce7;
+      --danger: #c62828;
+      --warn: #b45309;
+      --border: #dfe4ec;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 10px;
+    }
+    .topbar {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    h1 { font-size: 16px; margin: 0; font-weight: 700; }
+    .db-pill {
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 3px 8px;
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .controls-grid {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+    input[type="file"] { font-size: 12.5px; width: 100%; }
+    .btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn:disabled { background: #aeb8c7; cursor: not-allowed; }
+    .btn-ghost { background: #f2f4f8; color: var(--text); border: 1px solid var(--border); }
+    .btn-ok { background: var(--ok); color: #fff; }
+    .btn-danger { background: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
+    .btn-sm { padding: 4px 8px; font-size: 11.5px; border-radius: 7px; }
+
+    .meta-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+    .meta-row label { display: flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text); }
+    input[type="range"] { width: 100px; }
+    .stats-bar {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      background: #f6f9ff;
+      border: 1px solid #d9e6ff;
+      padding: 5px 9px;
+      border-radius: 8px;
+    }
+    .stats-bar.err { color: var(--danger); background: #fef2f2; border-color: #fecaca; }
+
+    /* Khung Unsure nằm trên cùng, chiều cao gọn, không text thừa, nút Re-check nằm ngay cạnh */
+    .unsure-strip {
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-radius: 11px;
+      padding: 6px 8px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 62px;
+    }
+    .unsure-badge {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--warn);
+      background: #fef3c7;
+      padding: 3px 6px;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    .unsure-scroll {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      flex: 1;
+      align-items: center;
+      padding: 2px 0;
+    }
+    .unsure-thumb {
+      position: relative;
+      width: 48px;
+      height: 48px;
+      border-radius: 7px;
+      overflow: hidden;
+      flex-shrink: 0;
+      border: 1px solid #f59e0b;
+      background: #eee;
+    }
+    .unsure-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      cursor: pointer;
+      display: block;
+    }
+
+    /* Lưới 2 cột: mỗi người chiếm 1/2 chiều rộng màn hình */
+    .people-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+      align-items: start;
+    }
+    .person-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px;
+      min-width: 0;
+    }
+    .person-card.confirmed {
+      border-color: #86efac;
+      background: #f9fefb;
+    }
+    .person-head {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: 6px;
+    }
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      border: 1.5px solid var(--accent);
+    }
+    .name-compact {
+      width: 68px;
+      min-width: 0;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 5px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .confirm-btn {
+      padding: 3px 6px;
+      font-size: 11px;
+      border-radius: 6px;
+      border: 1px solid #bbf7d0;
+      background: var(--ok-soft);
+      color: var(--ok);
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .cnt-pill {
+      font-size: 11px;
+      color: var(--muted);
+      margin-left: auto;
+      white-space: nowrap;
+    }
+    .merge-mini {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 7px;
+    }
+    .merge-mini select {
+      flex: 1;
+      min-width: 0;
+      font-size: 11px;
+      padding: 3px 4px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #fafbfc;
+    }
+    .faces-subgrid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 4px;
+    }
+    .face-item {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #e9edf3;
+    }
+    .face-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      cursor: pointer;
+    }
+    .del-x {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(20, 24, 30, 0.74);
+      color: #fff;
+      font-size: 11px;
+      line-height: 1;
+      padding: 0;
+      cursor: pointer;
+    }
+    .strike-tag {
+      position: absolute;
+      bottom: 2px;
+      left: 2px;
+      font-size: 9px;
+      background: rgba(0,0,0,0.68);
+      color: #fff;
+      padding: 1px 3px;
+      border-radius: 3px;
+      pointer-events: none;
+    }
+    .suspect-dot {
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #f59e0b;
+      border: 1px solid #fff;
+      pointer-events: none;
+    }
+
+    /* Modal xác nhận chuyển người / chi tiết mặt */
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(12, 16, 22, 0.85);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+    }
+    .modal-box {
+      background: #fff;
+      color: var(--text);
+      border-radius: 14px;
+      padding: 13px;
+      max-width: 420px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .compare-row {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 8px;
+      align-items: center;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+    }
+    .compare-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+    .compare-card img {
+      width: 96px;
+      height: 96px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .sim-badge {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 12px;
+      padding: 5px 8px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .modal-main-img {
+      width: 100%;
+      max-height: 44vh;
+      object-fit: contain;
+      border-radius: 9px;
+      background: #111;
+    }
+    .modal-info { font-size: 12px; color: var(--muted); line-height: 1.4; }
+    .modal-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="title-row">
+      <h1>Face Sorter v7 — iPad M1+</h1>
+      <div class="db-pill">
+        <span>DB đã lưu: <b id="dbCount">0</b> người</span>
+        <button id="clearDbBtn" class="btn btn-sm btn-ghost" style="padding:2px 6px;font-size:10.5px;">Xoá DB</button>
+      </div>
+    </div>
+    <div class="controls-grid">
+      <input type="file" id="fileInput" accept="image/*" multiple />
+      <button id="runBtn" class="btn" disabled>Đang tải AI...</button>
+    </div>
+    <div class="meta-row">
+      <label>Khớp tối thiểu: <span id="simLabel">72%</span>
+        <input type="range" id="simThreshold" min="52" max="92" step="1" value="72" />
+      </label>
+      <label>Góc nghiêng tối đa: <span id="yawLabel">36°</span>
+        <input type="range" id="maxYaw" min="20" max="55" step="1" value="36" />
+      </label>
+    </div>
+    <div id="status" class="stats-bar">Đang tải mô hình MediaPipe & Human FaceRes...</div>
+  </div>
+
+  <!-- Khung Unsure ở trên cùng, chiều cao gọn, không text dài, nút Re-check unsure nằm ngay cạnh -->
+  <div class="unsure-strip">
+    <span class="unsure-badge" id="unsureBadge">0</span>
+    <div id="unsureGrid" class="unsure-scroll"></div>
+    <button id="recheckUnsureBtn" class="btn btn-sm btn-ghost">Re-check unsure</button>
+  </div>
+
+  <div id="peopleGrid" class="people-grid"></div>
+
+  <!-- Modal xác nhận đề xuất chuyển người khi bấm Xoá -->
+  <div id="confirmMoveModal" class="overlay" onclick="closeConfirmModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <div style="font-size:13.5px;font-weight:700;">Đề xuất chuyển sang người gần giống nhất</div>
+      <div class="compare-row">
+        <div class="compare-card">
+          <img id="cmpSrcImg" src="" alt="" />
+          <span id="cmpSrcLabel">Mặt vừa xoá</span>
+        </div>
+        <div class="sim-badge" id="cmpSimPct">0%</div>
+        <div class="compare-card">
+          <img id="cmpDstImg" src="" alt="" />
+          <span id="cmpDstLabel">Đề xuất</span>
+        </div>
+      </div>
+      <div id="cmpDesc" class="modal-info"></div>
+      <div class="modal-actions">
+        <button id="cmpNoBtn" class="btn btn-sm btn-danger">No (Không khớp)</button>
+        <button id="cmpYesBtn" class="btn btn-sm btn-ok">Yes (Chuyển sang)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal xem chi tiết & chuyển thủ công -->
+  <div id="detailModal" class="overlay" onclick="closeDetailModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <img id="detailImg" class="modal-main-img" src="" alt="" />
+      <div id="detailInfo" class="modal-info"></div>
+      <div class="modal-actions">
+        <select id="moveTargetSelect"></select>
+        <button id="moveTargetBtn" class="btn btn-sm">Chuyển người</button>
+        <button id="removeStrikeBtn" class="btn btn-sm btn-danger">Xoá (đề xuất chuyển)</button>
+        <button class="btn btn-sm btn-ghost" onclick="closeDetailModal()">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    const MP_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+    const MP_WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+    const DB_NAME = "FaceSorterLocalDB_v7";
+    const STORE_NAME = "known_people";
+
+    const fileInput = document.getElementById("fileInput");
+    const runBtn = document.getElementById("runBtn");
+    const statusEl = document.getElementById("status");
+    const simThresholdEl = document.getElementById("simThreshold");
+    const simLabel = document.getElementById("simLabel");
+    const maxYawEl = document.getElementById("maxYaw");
+    const yawLabel = document.getElementById("yawLabel");
+    const peopleGrid = document.getElementById("peopleGrid");
+    const unsureGrid = document.getElementById("unsureGrid");
+    const unsureBadge = document.getElementById("unsureBadge");
+    const recheckUnsureBtn = document.getElementById("recheckUnsureBtn");
+    const dbCountEl = document.getElementById("dbCount");
+    const clearDbBtn = document.getElementById("clearDbBtn");
+
+    const confirmMoveModal = document.getElementById("confirmMoveModal");
+    const cmpSrcImg = document.getElementById("cmpSrcImg");
+    const cmpSrcLabel = document.getElementById("cmpSrcLabel");
+    const cmpDstImg = document.getElementById("cmpDstImg");
+    const cmpDstLabel = document.getElementById("cmpDstLabel");
+    const cmpSimPct = document.getElementById("cmpSimPct");
+    const cmpDesc = document.getElementById("cmpDesc");
+    const cmpYesBtn = document.getElementById("cmpYesBtn");
+    const cmpNoBtn = document.getElementById("cmpNoBtn");
+
+    const detailModal = document.getElementById("detailModal");
+    const detailImg = document.getElementById("detailImg");
+    const detailInfo = document.getElementById("detailInfo");
+    const moveTargetSelect = document.getElementById("moveTargetSelect");
+    const moveTargetBtn = document.getElementById("moveTargetBtn");
+    const removeStrikeBtn = document.getElementById("removeStrikeBtn");
+
+    let human = null;
+    let faceLandmarker = null;
+    let allFaces = [];
+    let people = [];
+    let unsureFaces = [];
+    let knownDB = []; // [{ id, name, centroid: Float32Array, samples: Float32Array[], avatarUrl }]
+    let scanStats = { scanned: 0, skipped: 0, skipReasons: [] };
+    let pendingProposal = null;
+    let detailCtx = null;
+
+    function setStatus(msg, isErr = false) {
+      statusEl.textContent = msg;
+      statusEl.className = isErr ? "stats-bar err" : "stats-bar";
+    }
+
+    // --- IndexedDB lưu danh tính đã xác nhận để dùng cho các lần quét sau ---
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME, { keyPath: "name" });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    async function loadKnownDB() {
+      try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const store = tx.objectStore(STORE_NAME);
+        const rows = await new Promise((res, rej) => {
+          const r = store.getAll();
+          r.onsuccess = () => res(r.result || []);
+          r.onerror = () => rej(r.error);
+        });
+        knownDB = rows.map(r => ({
+          name: r.name,
+          centroid: l2Normalize(Float32Array.from(r.centroid)),
+          samples: (r.samples || []).map(s => l2Normalize(Float32Array.from(s))),
+          avatarUrl: r.avatarUrl || ""
+        }));
+        dbCountEl.textContent = knownDB.length;
+      } catch (e) {
+        console.warn("DB load error:", e);
+      }
+    }
+
+    async function savePersonToDB(person) {
+      if (!person || !person.faces.length) return;
+      const validSamples = person.faces.filter(f => f.embedding).slice(0, 12).map(f => Array.from(f.embedding));
+      if (!validSamples.length) return;
+      const centroidArr = Array.from(calcNormalizedCentroid(validSamples.map(s => Float32Array.from(s))));
+
+      const db = await openDB();
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      tx.objectStore(STORE_NAME).put({
+        name: person.name.trim(),
+        centroid: centroidArr,
+        samples: validSamples,
+        avatarUrl: person.faces[0].url,
+        updatedAt: Date.now()
+      });
+      await new Promise(res => { tx.oncomplete = res; });
+      await loadKnownDB();
+    }
+
+    clearDbBtn.addEventListener("click", async () => {
+      const db = await openDB();
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      tx.objectStore(STORE_NAME).clear();
+      await new Promise(res => { tx.oncomplete = res; });
+      knownDB = [];
+      dbCountEl.textContent = "0";
+      setStatus("Đã xoá toàn bộ dữ liệu người đã lưu trong DB.");
+    });
+
+    async function initModels() {
+      await loadKnownDB();
+      try {
+        let wait = 0;
+        while ((!window.Human || !window.__MP_VISION__) && wait < 100) {
+          await new Promise(r => setTimeout(r, 100));
+          wait++;
+        }
+        if (!window.Human || !window.__MP_VISION__) {
+          throw new Error("Không tải được thư viện Human hoặc MediaPipe.");
+        }
+
+        human = new window.Human.Human({
+          backend: "webgl",
+          modelBasePath: "https://cdn.jsdelivr.net/npm/@vladmandic/human/models/",
+          cacheSensitivity: 0,
+          face: {
+            enabled: true,
+            detector: { enabled: true, maxDetected: 18, minConfidence: 0.50, rotation: true },
+            mesh: { enabled: true },
+            iris: { enabled: false },
+            description: { enabled: true },
+            emotion: { enabled: false },
+            antispoof: { enabled: false },
+            liveness: { enabled: false }
+          },
+          body: { enabled: false },
+          hand: { enabled: false },
+          object: { enabled: false },
+          gesture: { enabled: false }
+        });
+        await human.load();
+
+        const { FilesetResolver, FaceLandmarker } = window.__MP_VISION__;
+        const vision = await FilesetResolver.forVisionTasks(MP_WASM_URL);
+        faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MP_MODEL_URL, delegate: "GPU" },
+          runningMode: "IMAGE",
+          numFaces: 18,
+          outputFacialTransformationMatrixes: true
+        });
+
+        runBtn.disabled = false;
+        runBtn.textContent = "Quét (10-20 ảnh)";
+        setStatus(`Sẵn sàng • DB đã nhớ ${knownDB.length} người.`);
+      } catch (err) {
+        setStatus("Lỗi tải mô hình: " + err.message, true);
+      }
+    }
+
+    initModels();
+
+    simThresholdEl.addEventListener("input", () => {
+      simLabel.textContent = `${simThresholdEl.value}%`;
+      if (allFaces.length > 0) clusterExclusive();
+    });
+
+    maxYawEl.addEventListener("input", () => {
+      yawLabel.textContent = `${maxYawEl.value}°`;
+      if (allFaces.length > 0) clusterExclusive();
+    });
+
+    function l2Normalize(vec) {
+      let norm = 0;
+      for (let i = 0; i < vec.length; i++) norm += vec[i] * vec[i];
+      norm = Math.sqrt(norm) || 1;
+      const out = new Float32Array(vec.length);
+      for (let i = 0; i < vec.length; i++) out[i] = vec[i] / norm;
+      return out;
+    }
+
+    function cosineSimilarity(a, b) {
+      if (!a || !b || a.length !== b.length) return -1;
+      let dot = 0;
+      for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+      return Math.max(-1, Math.min(1, dot));
+    }
+
+    // Đối chiếu mặt với TOÀN BỘ các mặt hiện có trong 1 người (kết hợp điểm cao nhất & trung bình centroid)
+    function similarityToPerson(emb, person) {
+      if (!emb || !person) return 0;
+      const simCentroid = cosineSimilarity(emb, person.centroid);
+      let maxSampleSim = simCentroid;
+      const samples = person.embs || person.samples || [];
+      for (const s of samples) {
+        const sim = cosineSimilarity(emb, s);
+        if (sim > maxSampleSim) maxSampleSim = sim;
+      }
+      // Kết hợp đối chiếu toàn bộ mặt trong nhóm (tránh lệ thuộc 1 ảnh neo duy nhất)
+      return 0.65 * maxSampleSim + 0.35 * simCentroid;
+    }
+
+    function calcNormalizedCentroid(vectors) {
+      const len = vectors[0].length;
+      const sum = new Float32Array(len);
+      for (const v of vectors) {
+        for (let i = 0; i < len; i++) sum[i] += v[i];
+      }
+      let norm = 0;
+      for (let i = 0; i < len; i++) {
+        sum[i] /= vectors.length;
+        norm += sum[i] * sum[i];
+      }
+      norm = Math.sqrt(norm) || 1;
+      for (let i = 0; i < len; i++) sum[i] /= norm;
+      return sum;
+    }
+
+    function estimateYawDegFromMatrix(matrixData) {
+      if (!matrixData || matrixData.length < 16) return 0;
+      return Math.abs((Math.atan2(matrixData[8], matrixData[10]) * 180) / Math.PI);
+    }
+
+    function fileToCanvas(file, maxDim = 1500) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            if (width >= height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const c = document.createElement("canvas");
+          c.width = width;
+          c.height = height;
+          c.getContext("2d").drawImage(img, 0, 0, width, height);
+          URL.revokeObjectURL(url);
+          resolve(c);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("Lỗi đọc ảnh"));
+        };
+        img.src = url;
+      });
+    }
+
+    // Cắt mặt STRICTLY bên trong khung mặt gốc (không mở rộng ra ngoài và kẹp biên không chạm khung khác)
+    function cropStrictlyInsideFaceBox(sourceCanvas, box, allBoxes, outSize = 240) {
+      let x1 = Math.max(0, box.x);
+      let y1 = Math.max(0, box.y);
+      let x2 = Math.min(sourceCanvas.width, box.x + box.width);
+      let y2 = Math.min(sourceCanvas.height, box.y + box.height);
+
+      // Kẹp biên nếu khung mặt này giao hoặc sát khung mặt khác trong collage
+      for (const other of allBoxes) {
+        if (other === box) continue;
+        const ox1 = other.x, oy1 = other.y;
+        const ox2 = other.x + other.width, oy2 = other.y + other.height;
+
+        const overlapY = Math.min(y2, oy2) - Math.max(y1, oy1);
+        const overlapX = Math.min(x2, ox2) - Math.max(x1, ox1);
+
+        if (overlapY > 0) {
+          // Mặt khác nằm bên phải và lấn vào x2
+          if (ox1 > x1 && ox1 < x2) x2 = Math.max(x1 + 16, ox1 - 2);
+          // Mặt khác nằm bên trái và lấn vào x1
+          if (ox2 < x2 && ox2 > x1) x1 = Math.min(x2 - 16, ox2 + 2);
+        }
+        if (overlapX > 0) {
+          // Mặt khác nằm bên dưới và lấn vào y2
+          if (oy1 > y1 && oy1 < y2) y2 = Math.max(y1 + 16, oy1 - 2);
+          // Mặt khác nằm bên trên và lấn vào y1
+          if (oy2 < y2 && oy2 > y1) y1 = Math.min(y2 - 16, oy2 + 2);
+        }
+      }
+
+      const w = Math.max(16, Math.round(x2 - x1));
+      const h = Math.max(16, Math.round(y2 - y1));
+      const sx = Math.round(x1);
+      const sy = Math.round(y1);
+
+      const out = document.createElement("canvas");
+      out.width = outSize;
+      out.height = outSize;
+      out.getContext("2d").drawImage(sourceCanvas, sx, sy, w, h, 0, 0, outSize, outSize);
+      const dataUrl = out.toDataURL("image/jpeg", 0.92);
+      out.width = 0;
+      out.height = 0;
+      return dataUrl;
+    }
+
+    runBtn.addEventListener("click", async () => {
+      const files = Array.from(fileInput.files || []);
+      if (!files.length) {
+        setStatus("Hãy chọn 10-20 ảnh trước.", true);
+        return;
+      }
+
+      runBtn.disabled = true;
+      allFaces = [];
+      people = [];
+      unsureFaces = [];
+      scanStats = { scanned: 0, skipped: 0, skipReasons: [] };
+      let idSeq = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        setStatus(`Đang quét ảnh ${i + 1}/${files.length}...`);
+        await new Promise(r => setTimeout(r, 10));
+
+        try {
+          const canvas = await fileToCanvas(files[i], 1500);
+          const baseName = files[i].name.replace(/\.[^.]+$/, "");
+
+          const mpRes = faceLandmarker ? faceLandmarker.detect(canvas) : null;
+          const mpFaces = [];
+          if (mpRes && mpRes.faceLandmarks) {
+            mpRes.faceLandmarks.forEach((lms, k) => {
+              let minX = 1, minY = 1, maxX = 0, maxY = 0;
+              for (const pt of lms) {
+                if (pt.x < minX) minX = pt.x;
+                if (pt.y < minY) minY = pt.y;
+                if (pt.x > maxX) maxX = pt.x;
+                if (pt.y > maxY) maxY = pt.y;
+              }
+              const yaw = mpRes.facialTransformationMatrixes?.[k]
+                ? estimateYawDegFromMatrix(mpRes.facialTransformationMatrixes[k].data)
+                : 0;
+              mpFaces.push({
+                cx: ((minX + maxX) / 2) * canvas.width,
+                cy: ((minY + maxY) / 2) * canvas.height,
+                box: {
+                  x: minX * canvas.width,
+                  y: minY * canvas.height,
+                  width: Math.max(16, (maxX - minX) * canvas.width),
+                  height: Math.max(16, (maxY - minY) * canvas.height)
+                },
+                yaw
+              });
+            });
+          }
+
+          const hRes = await human.detect(canvas);
+          const rawHumanFaces = hRes.face || [];
+
+          const validHumanFaces = [];
+          for (const f of rawHumanFaces) {
+            if (!f.box || f.box[2] < 38 || f.box[3] < 38) {
+              scanStats.skipped++;
+              scanStats.skipReasons.push("mặt quá nhỏ <38px");
+              continue;
+            }
+            if (!f.embedding || !f.embedding.length) {
+              scanStats.skipped++;
+              scanStats.skipReasons.push("thiếu vector đặc trưng");
+              continue;
+            }
+            validHumanFaces.push(f);
+          }
+
+          // Ghi nhận mặt MediaPipe thấy nhưng Human bỏ qua
+          if (mpFaces.length > validHumanFaces.length) {
+            const diff = mpFaces.length - validHumanFaces.length;
+            scanStats.skipped += diff;
+            for (let d = 0; d < diff; d++) scanStats.skipReasons.push("mặt mờ/khuất chỉ thấy ở landmarks");
+          }
+
+          const allBoxes = validHumanFaces.map(f => ({
+            x: f.box[0],
+            y: f.box[1],
+            width: f.box[2],
+            height: f.box[3]
+          }));
+
+          validHumanFaces.forEach((f, idx) => {
+            const box = allBoxes[idx];
+            const cx = box.x + box.width / 2;
+            const cy = box.y + box.height / 2;
+
+            let yaw = f.rotation?.angle?.yaw ? Math.abs((f.rotation.angle.yaw * 180) / Math.PI) : 0;
+            let bestDist = Infinity;
+            for (const m of mpFaces) {
+              const d = Math.hypot(m.cx - cx, m.cy - cy);
+              if (d < bestDist && d < Math.max(box.width, box.height)) {
+                bestDist = d;
+                yaw = m.yaw;
+              }
+            }
+
+            idSeq++;
+            scanStats.scanned++;
+            const faceUrl = cropStrictlyInsideFaceBox(canvas, box, allBoxes, 240);
+            allFaces.push({
+              id: `f_${idSeq}`,
+              url: faceUrl,
+              fileName: `${baseName}_m${idx + 1}.jpg`,
+              embedding: l2Normalize(f.embedding),
+              score: f.faceScore || f.boxScore || 0.5,
+              yaw,
+              strikes: 0,
+              excludedIds: new Set(),
+              manualSuspect: false,
+              reason: ""
+            });
+          });
+
+          canvas.width = 0;
+          canvas.height = 0;
+        } catch (err) {
+          console.warn(err);
+        }
+      }
+
+      clusterExclusive();
+      runBtn.disabled = false;
+      updateSummaryStatus();
+    });
+
+    function updateSummaryStatus() {
+      const totalFacesCount = allFaces.length;
+      const maxAllowedPeople = Math.max(1, Math.floor((totalFacesCount * 2) / 3));
+      const skipDetail = scanStats.skipped > 0
+        ? ` (bỏ qua ${scanStats.skipped} mặt mờ/nhỏ)`
+        : "";
+      setStatus(
+        `Đã scan: ${scanStats.scanned} mặt • Bỏ qua: ${scanStats.skipped} mặt${skipDetail} • Nhóm: ${people.length}/${maxAllowedPeople} người • Unsure: ${unsureFaces.length}`
+      );
+    }
+
+    function clusterExclusive() {
+      const simTh = parseFloat(simThresholdEl.value) / 100;
+      const maxYaw = parseFloat(maxYawEl.value);
+
+      const permanentUnsure = unsureFaces.filter(f => f.strikes >= 3);
+      unsureFaces = [...permanentUnsure];
+      people = [];
+
+      const candidates = [];
+      for (const f of allFaces) {
+        if (f.strikes >= 3) continue;
+        if (f.yaw > maxYaw) {
+          unsureFaces.push({ ...f, reason: `Nghiêng ~${Math.round(f.yaw)}° > ${maxYaw}°` });
+          continue;
+        }
+        candidates.push(f);
+      }
+
+      // Ưu tiên khớp trước với các người đã lưu trong DB (nếu có)
+      for (const kPerson of knownDB) {
+        people.push({
+          id: `db_${kPerson.name}`,
+          name: kPerson.name,
+          centroid: kPerson.centroid,
+          embs: [...kPerson.samples],
+          faces: [],
+          fromDB: true,
+          confirmed: true
+        });
+      }
+
+      candidates.sort((a, b) => b.score - a.score);
+      const maxPeopleLimit = Math.max(1, Math.floor((allFaces.length * 2) / 3));
+
+      for (const f of candidates) {
+        let bestIdx = -1;
+        let bestSim = simTh;
+
+        for (let i = 0; i < people.length; i++) {
+          if (f.excludedIds.has(people[i].id)) continue;
+          const sim = similarityToPerson(f.embedding, people[i]);
+          if (sim >= simTh && sim > bestSim) {
+            bestSim = sim;
+            bestIdx = i;
+          }
+        }
+
+        if (bestIdx >= 0) {
+          people[bestIdx].faces.push(f);
+          people[bestIdx].embs.push(f.embedding);
+          people[bestIdx].centroid = calcNormalizedCentroid(people[bestIdx].embs);
+        } else {
+          // Ràng buộc giới hạn tổng số người m <= n * 2/3
+          const activePeopleCount = people.filter(p => p.faces.length > 0).length;
+          if (activePeopleCount < maxPeopleLimit) {
+            people.push({
+              id: `p_${people.length + 1}_${Math.random().toString(36).slice(2, 6)}`,
+              name: `N${activePeopleCount + 1}`,
+              centroid: f.embedding,
+              embs: [f.embedding],
+              faces: [f],
+              fromDB: false,
+              confirmed: false
+            });
+          } else {
+            // Nếu đã chạm trần m = n*2/3, tìm người giống nhất nếu >= (simTh - 0.08), không thì đưa vào Unsure
+            let fallbackIdx = -1;
+            let fallbackSim = Math.max(0.50, simTh - 0.08);
+            for (let i = 0; i < people.length; i++) {
+              if (f.excludedIds.has(people[i].id)) continue;
+              const s = similarityToPerson(f.embedding, people[i]);
+              if (s > fallbackSim) {
+                fallbackSim = s;
+                fallbackIdx = i;
+              }
+            }
+            if (fallbackIdx >= 0) {
+              people[fallbackIdx].faces.push(f);
+              people[fallbackIdx].embs.push(f.embedding);
+              people[fallbackIdx].centroid = calcNormalizedCentroid(people[fallbackIdx].embs);
+            } else {
+              f.reason = `Chạm trần ${maxPeopleLimit} người (≤ 2/3 số mặt)`;
+              unsureFaces.push(f);
+            }
+          }
+        }
+      }
+
+      // Loại bỏ các khung DB rỗng không có mặt nào trong batch này
+      people = people.filter(p => p.faces.length > 0);
+      people.sort((a, b) => b.faces.length - a.faces.length);
+      let autoIdx = 1;
+      people.forEach(p => {
+        if (!p.fromDB && /^N\d+$/.test(p.name)) {
+          p.name = `N${autoIdx++}`;
+        }
+      });
+
+      renderUI();
+      updateSummaryStatus();
+    }
+
+    // Khi bấm nút Xoá: tính người gần giống nhất (trừ nhóm hiện tại và nhóm đã loại trừ), mở modal so sánh Yes/No
+    window.proposeReassignOnDelete = function(personIdx, faceId) {
+      const srcPerson = people[personIdx];
+      if (!srcPerson) return;
+      const fIdx = srcPerson.faces.findIndex(x => x.id === faceId);
+      if (fIdx < 0) return;
+
+      const face = srcPerson.faces[fIdx];
+      const nextStrikes = (face.strikes || 0) + 1;
+
+      // Nếu đã bị xoá đủ 3 lần -> đưa thẳng vào Unsure
+      if (nextStrikes >= 3) {
+        srcPerson.faces.splice(fIdx, 1);
+        face.strikes = 3;
+        face.excludedIds.add(srcPerson.id);
+        face.reason = "Đã bị xoá 3 lần";
+        recalcPersonGroup(personIdx);
+        unsureFaces.push(face);
+        renderUI();
+        updateSummaryStatus();
+        return;
+      }
+
+      // Tìm người chưa bị xoá có tỷ lệ giống cao nhất
+      let bestTargetIdx = -1;
+      let bestSim = -1;
+      for (let i = 0; i < people.length; i++) {
+        if (i === personIdx) continue;
+        if (face.excludedIds.has(people[i].id)) continue;
+        const sim = similarityToPerson(face.embedding, people[i]);
+        if (sim > bestSim) {
+          bestSim = sim;
+          bestTargetIdx = i;
+        }
+      }
+
+      if (bestTargetIdx < 0) {
+        // Không còn người nào khác để đề xuất -> loại khỏi nhóm hiện tại và đưa tạm vào Unsure
+        srcPerson.faces.splice(fIdx, 1);
+        face.strikes = nextStrikes;
+        face.excludedIds.add(srcPerson.id);
+        face.reason = `Xoá ${face.strikes}/3 (không còn nhóm đối chiếu)`;
+        recalcPersonGroup(personIdx);
+        unsureFaces.push(face);
+        renderUI();
+        updateSummaryStatus();
+        return;
+      }
+
+      const targetPerson = people[bestTargetIdx];
+      const pct = Math.max(0, Math.round(bestSim * 100));
+
+      pendingProposal = {
+        srcPersonId: srcPerson.id,
+        dstPersonId: targetPerson.id,
+        faceId: face.id
+      };
+
+      cmpSrcImg.src = face.url;
+      cmpSrcLabel.textContent = `Từ ${srcPerson.name} (lần ${nextStrikes}/3)`;
+      cmpDstImg.src = targetPerson.faces[0]?.url || "";
+      cmpDstLabel.textContent = `${targetPerson.name} (${targetPerson.faces.length} mặt)`;
+      cmpSimPct.textContent = `${pct}%`;
+      cmpDesc.textContent = `Khả năng cao mặt này thuộc về "${targetPerson.name}" (giống ${pct}%). Bấm Yes để chuyển sang "${targetPerson.name}", hoặc No để loại trừ cả 2 người này.`;
+      confirmMoveModal.style.display = "flex";
+    };
+
+    window.closeConfirmModal = function() {
+      confirmMoveModal.style.display = "none";
+      pendingProposal = null;
+    };
+
+    cmpYesBtn.addEventListener("click", () => {
+      if (!pendingProposal) return;
+      const srcIdx = people.findIndex(p => p.id === pendingProposal.srcPersonId);
+      const dstIdx = people.findIndex(p => p.id === pendingProposal.dstPersonId);
+      if (srcIdx < 0 || dstIdx < 0) { closeConfirmModal(); return; }
+
+      const fIdx = people[srcIdx].faces.findIndex(x => x.id === pendingProposal.faceId);
+      if (fIdx < 0) { closeConfirmModal(); return; }
+
+      const [face] = people[srcIdx].faces.splice(fIdx, 1);
+      face.strikes = (face.strikes || 0) + 1;
+      face.excludedIds.add(people[srcIdx].id);
+
+      people[dstIdx].faces.push(face);
+      people[dstIdx].embs.push(face.embedding);
+      people[dstIdx].centroid = calcNormalizedCentroid(people[dstIdx].embs);
+
+      recalcPersonGroup(srcIdx);
+      closeConfirmModal();
+      renderUI();
+      updateSummaryStatus();
+    });
+
+    cmpNoBtn.addEventListener("click", () => {
+      if (!pendingProposal) return;
+      const srcIdx = people.findIndex(p => p.id === pendingProposal.srcPersonId);
+      const dstIdx = people.findIndex(p => p.id === pendingProposal.dstPersonId);
+      if (srcIdx < 0) { closeConfirmModal(); return; }
+
+      const fIdx = people[srcIdx].faces.findIndex(x => x.id === pendingProposal.faceId);
+      if (fIdx < 0) { closeConfirmModal(); return; }
+
+      const [face] = people[srcIdx].faces.splice(fIdx, 1);
+      face.strikes = (face.strikes || 0) + 1;
+      face.excludedIds.add(people[srcIdx].id);
+      if (dstIdx >= 0) face.excludedIds.add(people[dstIdx].id);
+
+      recalcPersonGroup(srcIdx);
+
+      // Tìm người tiếp theo nếu chưa đủ 3 lần xoá
+      if (face.strikes < 3) {
+        let nextIdx = -1;
+        let nextSim = 0.52;
+        for (let i = 0; i < people.length; i++) {
+          if (face.excludedIds.has(people[i].id)) continue;
+          const s = similarityToPerson(face.embedding, people[i]);
+          if (s > nextSim) { nextSim = s; nextIdx = i; }
+        }
+        if (nextIdx >= 0) {
+          people[nextIdx].faces.push(face);
+          people[nextIdx].embs.push(face.embedding);
+          people[nextIdx].centroid = calcNormalizedCentroid(people[nextIdx].embs);
+        } else {
+          face.reason = `Đã xoá ${face.strikes}/3`;
+          unsureFaces.push(face);
+        }
+      } else {
+        face.reason = "Đã bị xoá 3 lần";
+        unsureFaces.push(face);
+      }
+
+      closeConfirmModal();
+      renderUI();
+      updateSummaryStatus();
+    });
+
+    function recalcPersonGroup(idx) {
+      const p = people[idx];
+      if (!p) return;
+      if (p.faces.length === 0) {
+        people.splice(idx, 1);
+      } else {
+        p.embs = p.faces.map(x => x.embedding);
+        p.centroid = calcNormalizedCentroid(p.embs);
+      }
+    }
+
+    function mergePerson(fromIdx, toIdx) {
+      if (fromIdx === toIdx || !people[fromIdx] || !people[toIdx]) return;
+      const src = people[fromIdx];
+      const dst = people[toIdx];
+      const seen = new Set(dst.faces.map(f => f.id));
+      for (const f of src.faces) {
+        if (!seen.has(f.id)) {
+          seen.add(f.id);
+          dst.faces.push(f);
+          dst.embs.push(f.embedding);
+        }
+      }
+      dst.centroid = calcNormalizedCentroid(dst.embs);
+      people.splice(fromIdx, 1);
+      renderUI();
+      updateSummaryStatus();
+    }
+
+    // Re-check unsure bằng lật ngang (horizontal flip) & đối chiếu với toàn bộ mặt của từng người
+    recheckUnsureBtn.addEventListener("click", async () => {
+      if (!unsureFaces.length) return;
+      recheckUnsureBtn.disabled = true;
+
+      const stillUnsure = [];
+      const relaxedSim = Math.max(0.54, (parseFloat(simThresholdEl.value) / 100) - 0.08);
+
+      for (const f of unsureFaces) {
+        if (f.strikes >= 3) {
+          stillUnsure.push(f);
+          continue;
+        }
+        try {
+          const im = await new Promise((res, rej) => {
+            const i = new Image();
+            i.onload = () => res(i);
+            i.onerror = rej;
+            i.src = f.url;
+          });
+
+          const flipC = document.createElement("canvas");
+          flipC.width = 240;
+          flipC.height = 240;
+          const ctx = flipC.getContext("2d");
+          ctx.translate(240, 0);
+          ctx.scale(-1, 1);
+          ctx.drawImage(im, 0, 0, 240, 240);
+          const resFlip = await human.detect(flipC);
+          const embFlip = resFlip.face?.[0]?.embedding ? l2Normalize(resFlip.face[0].embedding) : null;
+          flipC.width = 0;
+          flipC.height = 0;
+
+          let bestIdx = -1;
+          let bestS = relaxedSim;
+          for (let i = 0; i < people.length; i++) {
+            if (f.excludedIds && f.excludedIds.has(people[i].id)) continue;
+            const s1 = similarityToPerson(f.embedding, people[i]);
+            const s2 = embFlip ? similarityToPerson(embFlip, people[i]) : 0;
+            const s = Math.max(s1, s2);
+            if (s > bestS) { bestS = s; bestIdx = i; }
+          }
+
+          if (bestIdx >= 0) {
+            people[bestIdx].faces.push(f);
+            people[bestIdx].embs.push(f.embedding);
+            people[bestIdx].centroid = calcNormalizedCentroid(people[bestIdx].embs);
+          } else {
+            stillUnsure.push(f);
+          }
+        } catch (_) {
+          stillUnsure.push(f);
+        }
+      }
+
+      unsureFaces = stillUnsure;
+      recheckUnsureBtn.disabled = false;
+      renderUI();
+      updateSummaryStatus();
+    });
+
+    function renderUI() {
+      // Render thanh Unsure trên cùng
+      unsureBadge.textContent = unsureFaces.length;
+      unsureGrid.innerHTML = "";
+      unsureFaces.forEach(f => {
+        const div = document.createElement("div");
+        div.className = "unsure-thumb";
+        div.innerHTML = `
+          <img src="${f.url}" />
+          ${f.strikes > 0 ? `<span class="strike-tag">${f.strikes}/3</span>` : ""}
+        `;
+        div.querySelector("img").onclick = () => openDetailModal("unsure", -1, f.id);
+        unsureGrid.appendChild(div);
+      });
+
+      // Render lưới 2 cột Người
+      peopleGrid.innerHTML = "";
+      const simTh = parseFloat(simThresholdEl.value) / 100;
+
+      people.forEach((p, idx) => {
+        const card = document.createElement("div");
+        card.className = `person-card ${p.confirmed ? "confirmed" : ""}`;
+
+        const opts = people
+          .map((other, oIdx) => oIdx === idx ? "" : `<option value="${oIdx}">→ ${other.name}</option>`)
+          .join("");
+
+        card.innerHTML = `
+          <div class="person-head">
+            <img class="avatar" src="${p.faces[0]?.url || ""}" />
+            <input class="name-compact" value="${p.name}" />
+            <button class="confirm-btn" title="Lưu người này vào DB">${p.confirmed ? "✓" : "Lưu"}</button>
+            <span class="cnt-pill">${p.faces.length}</span>
+          </div>
+          <div class="merge-mini">
+            <select class="m-sel">${opts || `<option value="">—</option>`}</select>
+            <button class="btn btn-sm btn-ghost m-btn" ${opts ? "" : "disabled"}>Gộp</button>
+          </div>
+          <div class="faces-subgrid"></div>
+        `;
+
+        card.querySelector(".name-compact").addEventListener("change", (e) => {
+          p.name = e.target.value.trim() || `N${idx + 1}`;
+          p.confirmed = false;
+          renderUI();
+        });
+
+        card.querySelector(".confirm-btn").addEventListener("click", async () => {
+          p.confirmed = true;
+          p.fromDB = true;
+          await savePersonToDB(p);
+          renderUI();
+          setStatus(`Đã lưu "${p.name}" (${p.faces.length} mặt) vào DB local cho lần quét sau.`);
+        });
+
+        card.querySelector(".m-btn").addEventListener("click", () => {
+          const t = parseInt(card.querySelector(".m-sel").value, 10);
+          if (!Number.isNaN(t)) mergePerson(idx, t);
+        });
+
+        const sub = card.querySelector(".faces-subgrid");
+        p.faces.forEach(f => {
+          // Chỉ đánh dấu chấm vàng nghi ngờ nếu mặt KHÔNG được chuyển thủ công và tỷ lệ giống toàn nhóm < ngưỡng
+          const simAll = similarityToPerson(f.embedding, p);
+          const isSuspect = !f.manualConfirmed && simAll < simTh;
+
+          const item = document.createElement("div");
+          item.className = "face-item";
+          item.innerHTML = `
+            <img src="${f.url}" />
+            ${isSuspect ? `<span class="suspect-dot" title="Giống ${Math.round(simAll * 100)}%"></span>` : ""}
+            <button class="del-x" title="Xoá & đề xuất chuyển">×</button>
+            ${f.strikes > 0 ? `<span class="strike-tag">${f.strikes}/3</span>` : ""}
+          `;
+          item.querySelector("img").onclick = () => openDetailModal("person", idx, f.id);
+          item.querySelector(".del-x").onclick = (ev) => {
+            ev.stopPropagation();
+            window.proposeReassignOnDelete(idx, f.id);
+          };
+          sub.appendChild(item);
+        });
+
+        peopleGrid.appendChild(card);
+      });
+    }
+
+    window.openDetailModal = function(source, personIdx, faceId) {
+      const face = source === "person"
+        ? people[personIdx]?.faces.find(x => x.id === faceId)
+        : unsureFaces.find(x => x.id === faceId);
+      if (!face) return;
+
+      detailCtx = { source, personIdx, faceId };
+      detailImg.src = face.url;
+      let simText = "";
+      if (source === "person" && people[personIdx]) {
+        const pct = Math.round(similarityToPerson(face.embedding, people[personIdx]) * 100);
+        simText = ` • Giống nhóm: ${pct}%`;
+      }
+      detailInfo.textContent = `${face.fileName} • Nghiêng ~${Math.round(face.yaw || 0)}°${simText} • Xoá: ${face.strikes}/3 ${face.reason ? "• " + face.reason : ""}`;
+
+      moveTargetSelect.innerHTML = people
+        .map((p, i) => (source === "person" && i === personIdx) ? "" : `<option value="${i}">${p.name} (${p.faces.length})</option>`)
+        .join("");
+
+      removeStrikeBtn.style.display = source === "person" ? "inline-block" : "none";
+      detailModal.style.display = "flex";
+    };
+
+    window.closeDetailModal = function() {
+      detailModal.style.display = "none";
+      detailCtx = null;
+    };
+
+    moveTargetBtn.addEventListener("click", () => {
+      if (!detailCtx) return;
+      const targetIdx = parseInt(moveTargetSelect.value, 10);
+      if (Number.isNaN(targetIdx) || !people[targetIdx]) return;
+
+      let face = null;
+      if (detailCtx.source === "person") {
+        const srcP = people[detailCtx.personIdx];
+        const i = srcP.faces.findIndex(x => x.id === detailCtx.faceId);
+        if (i >= 0) {
+          [face] = srcP.faces.splice(i, 1);
+          recalcPersonGroup(detailCtx.personIdx);
+        }
+      } else {
+        const i = unsureFaces.findIndex(x => x.id === detailCtx.faceId);
+        if (i >= 0) [face] = unsureFaces.splice(i, 1);
+      }
+
+      if (face) {
+        // Khi người dùng chuyển thủ công -> xác nhận thủ công và thêm vào tập embedding của người đích
+        face.manualConfirmed = true;
+        const safeIdx = Math.min(targetIdx, people.length - 1);
+        people[safeIdx].faces.push(face);
+        people[safeIdx].embs.push(face.embedding);
+        people[safeIdx].centroid = calcNormalizedCentroid(people[safeIdx].embs);
+      }
+      closeDetailModal();
+      renderUI();
+      updateSummaryStatus();
+    });
+
+    removeStrikeBtn.addEventListener("click", () => {
+      if (!detailCtx || detailCtx.source !== "person") return;
+      const { personIdx, faceId } = detailCtx;
+      closeDetailModal();
+      window.proposeReassignOnDelete(personIdx, faceId);
+    });
+  </script>
+</body>
+</html>
