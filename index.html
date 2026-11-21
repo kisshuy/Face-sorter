@@ -262,8 +262,8 @@
       <button id="runBtn" class="btn" disabled>Đang tải AI...</button>
     </div>
     <div class="meta-row">
-      <label>Độ tương đồng tối thiểu: <span id="simLabel">0.58</span>
-        <input type="range" id="simThreshold" min="0.42" max="0.78" step="0.01" value="0.58" />
+      <label>Cosine tối thiểu: <span id="simLabel">0.62</span>
+        <input type="range" id="simThreshold" min="0.35" max="0.88" step="0.01" value="0.62" />
       </label>
       <label>Góc nghiêng tối đa: <span id="yawLabel">36°</span>
         <input type="range" id="maxYaw" min="20" max="55" step="1" value="36" />
@@ -459,19 +459,23 @@
       return dataUrl;
     }
 
-    // Cosine similarity chuẩn hóa [0..1] cho vector FaceRes
+    // Cosine similarity chuẩn [-1..1] (chuẩn hóa L2 từng vector trước khi tính dot product)
+    function l2Normalize(vec) {
+      let norm = 0;
+      for (let i = 0; i < vec.length; i++) norm += vec[i] * vec[i];
+      norm = Math.sqrt(norm) || 1;
+      const out = new Float32Array(vec.length);
+      for (let i = 0; i < vec.length; i++) out[i] = vec[i] / norm;
+      return out;
+    }
+
     function cosineSimilarity(a, b) {
-      if (!a || !b || a.length !== b.length) return 0;
-      let dot = 0, na = 0, nb = 0;
-      for (let i = 0; i < a.length; i++) {
-        dot += a[i] * b[i];
-        na += a[i] * a[i];
-        nb += b[i] * b[i];
-      }
-      const denom = Math.sqrt(na) * Math.sqrt(nb);
-      if (denom === 0) return 0;
-      // Chuyển cosine [-1..1] sang [0..1]
-      return (dot / denom + 1) / 2;
+      if (!a || !b || a.length !== b.length) return -1;
+      const na = l2Normalize(a);
+      const nb = l2Normalize(b);
+      let dot = 0;
+      for (let i = 0; i < na.length; i++) dot += na[i] * nb[i];
+      return Math.max(-1, Math.min(1, dot));
     }
 
     function calcNormalizedCentroid(vectors) {
@@ -593,7 +597,7 @@
                 id: `f_${idSeq}`,
                 url: faceUrl,
                 fileName: `${baseName}_m${idx + 1}.jpg`,
-                embedding: f.embedding && f.embedding.length ? Float32Array.from(f.embedding) : null,
+                embedding: f.embedding && f.embedding.length ? l2Normalize(f.embedding) : null,
                 score: f.faceScore || f.boxScore || 0.5,
                 yaw,
                 strikes: 0,
@@ -650,7 +654,7 @@
           if (f.excludedIds.has(people[i].id)) continue;
           const simC = cosineSimilarity(f.embedding, people[i].centroid);
           const simA = cosineSimilarity(f.embedding, people[i].anchor);
-          const sim = Math.min(simC, simA * 1.03);
+          const sim = Math.min(simC, simA);
           if (sim > bestSim) {
             bestSim = sim;
             bestIdx = i;
@@ -711,7 +715,7 @@
 
       const baseSim = parseFloat(simThresholdEl.value);
       let nextIdx = -1;
-      let maxSim = Math.max(0.45, baseSim - 0.06);
+      let maxSim = Math.max(0.35, baseSim - 0.08);
 
       for (let i = 0; i < people.length; i++) {
         if (face.excludedIds.has(people[i].id)) continue;
@@ -765,7 +769,7 @@
       setStatus("Đang đối chiếu lại Unsure (extract lại + horizontal flip augmentation)...");
 
       const stillUnsure = [];
-      const relaxedSim = Math.max(0.46, parseFloat(simThresholdEl.value) - 0.07);
+      const relaxedSim = Math.max(0.38, parseFloat(simThresholdEl.value) - 0.10);
 
       for (const f of unsureFaces) {
         if (f.strikes >= 3) {
@@ -783,7 +787,7 @@
 
           // Thử nhận diện lại trực tiếp trên ảnh crop 240x240 + bản lật ngang (giúp mặt nghiêng khớp tốt hơn)
           const res1 = await human.detect(im);
-          let emb1 = res1.face?.[0]?.embedding ? Float32Array.from(res1.face[0].embedding) : f.embedding;
+          let emb1 = res1.face?.[0]?.embedding ? l2Normalize(res1.face[0].embedding) : f.embedding;
 
           const flipC = document.createElement("canvas");
           flipC.width = 240;
@@ -793,7 +797,7 @@
           fCtx.scale(-1, 1);
           fCtx.drawImage(im, 0, 0, 240, 240);
           const res2 = await human.detect(flipC);
-          const emb2 = res2.face?.[0]?.embedding ? Float32Array.from(res2.face[0].embedding) : null;
+          const emb2 = res2.face?.[0]?.embedding ? l2Normalize(res2.face[0].embedding) : null;
           flipC.width = 0;
           flipC.height = 0;
 
