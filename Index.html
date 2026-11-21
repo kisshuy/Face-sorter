@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gom Mặt v4 (ArcFace + MobileFaceNet, góc 3D)</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/dist/face-api.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/human/dist/human.js"></script>
+  <script type="module">
+    // MediaPipe chỉ để đo góc nghiêng 3D. Nếu lỗi thì app vẫn chạy (dùng ước lượng 2D)
+    try {
+      const mod = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
+      window.__MP_VISION__ = { FilesetResolver: mod.FilesetResolver, FaceLandmarker: mod.FaceLandmarker };
+    } catch (e) { console.warn('Không tải được MediaPipe:', e); window.__MP_VISION__ = null; }
+    window.__MP_READY__ = true;
+  </script>
+  <style>
+    :root {
+      --bg:#eef1f5; --card:#fff; --text:#18202c; --muted:#5c6778; --accent:#0f62fe;
+      --accent-soft:#e6efff; --danger:#c62828; --warn:#b45309; --border:#dfe4ec;
+    }
+    * { box-sizing: border-box; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif; background:var(--bg); color:var(--text); margin:0; padding:10px; }
+    .topbar { background:var(--card); border:1px solid var(--border); border-radius:14px; padding:12px 14px; margin-bottom:12px; display:flex; flex-direction:column; gap:10px; }
+    .title-row { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; }
+    h1 { font-size:17px; margin:0; font-weight:700; }
+    .badge-model { font-size:11px; font-weight:600; background:var(--accent-soft); color:var(--accent); padding:4px 8px; border-radius:999px; }
+    .controls-grid { display:grid; grid-template-columns:1fr auto; gap:10px; align-items:center; }
+    input[type="file"] { font-size:13px; width:100%; }
+    .btn { background:var(--accent); color:#fff; border:none; border-radius:9px; padding:8px 13px; font-size:13px; font-weight:600; cursor:pointer; }
+    .btn:disabled { background:#aeb8c7; cursor:not-allowed; }
+    .btn-ghost { background:#f2f4f8; color:var(--text); border:1px solid var(--border); }
+    .btn-sm { padding:5px 8px; font-size:11.5px; border-radius:7px; }
+    .btn-danger { background:#fee2e2; color:var(--danger); border:1px solid #fecaca; }
+    .meta-row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; font-size:12px; color:var(--muted); }
+    .meta-row label { display:flex; align-items:center; gap:6px; font-weight:600; color:var(--text); }
+    input[type="range"] { width:110px; }
+    #status { font-size:12.5px; font-weight:600; color:var(--accent); line-height:1.4; }
+    #status.err { color:var(--danger); }
+    #stats { font-size:12px; color:var(--muted); line-height:1.4; }
+    details.rules { font-size:12px; color:var(--muted); line-height:1.5; }
+    details.rules summary { cursor:pointer; font-weight:600; color:var(--text); }
+
+    /* Lưới 2 cột: mỗi người chiếm 1/2 chiều rộng màn hình */
+    .people-grid { display:grid; grid-template-columns:repeat(2, minmax(0,1fr)); gap:10px; align-items:start; }
+    .person-card { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:8px; min-width:0; }
+    .person-card.locked { border-color:#9bb2ff; }
+    .person-head { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+    .avatar { width:30px; height:30px; border-radius:50%; object-fit:cover; border:1.5px solid var(--accent); flex:none; }
+    .name-compact { flex:1; width:0; min-width:0; font-size:12px; font-weight:700; padding:4px 6px; border:1px solid var(--border); border-radius:6px; }
+    .cnt-pill { font-size:11px; color:var(--muted); white-space:nowrap; }
+    .merge-mini { display:flex; gap:4px; margin-bottom:8px; }
+    .merge-mini select { flex:1; min-width:0; font-size:11px; padding:4px; border-radius:6px; border:1px solid var(--border); background:#fafbfc; }
+    .faces-subgrid { display:grid; grid-template-columns:repeat(3, minmax(0,1fr)); gap:5px; }
+    .face-item { position:relative; aspect-ratio:1; border-radius:7px; overflow:hidden; background:#e9edf3; }
+    .face-item img { width:100%; height:100%; object-fit:contain; display:block; cursor:pointer; }
+    .del-x { position:absolute; top:2px; right:2px; width:18px; height:18px; border-radius:50%; border:none; background:rgba(20,24,30,.72); color:#fff; font-size:11px; line-height:1; padding:0; cursor:pointer; }
+    .pose-tag { position:absolute; bottom:2px; left:2px; font-size:9.5px; background:rgba(20,24,30,.72); color:#fff; border-radius:4px; padding:1px 4px; pointer-events:none; }
+    .blur-tag { position:absolute; top:2px; left:2px; font-size:9px; background:rgba(180,83,9,.9); color:#fff; border-radius:4px; padding:1px 4px; pointer-events:none; }
+    .flag { position:absolute; bottom:2px; right:2px; font-size:10px; color:#fff; border-radius:4px; padding:1px 5px; font-weight:700; pointer-events:none; }
+    .flag.warn { background:#d9480f; }
+    .flag.ok { background:#2b8a3e; }
+
+    .unsure-panel { margin-top:14px; background:#fffbeb; border:1px solid #fcd34d; border-radius:12px; padding:10px 12px; }
+    .unsure-head { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+    .unsure-title { font-size:13.5px; font-weight:700; color:var(--warn); }
+    .unsure-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(84px,1fr)); gap:6px; }
+
+    #modal { display:none; position:fixed; inset:0; background:rgba(12,16,22,.88); z-index:1000; align-items:center; justify-content:center; padding:14px; }
+    .modal-box { background:#fff; color:var(--text); border-radius:14px; padding:12px; max-width:420px; width:100%; max-height:94vh; overflow:auto; display:flex; flex-direction:column; gap:10px; }
+    .modal-box img { width:100%; max-height:46vh; object-fit:contain; border-radius:10px; background:#111; }
+    .modal-info { font-size:12px; color:var(--muted); line-height:1.4; }
+    .modal-row { display:flex; gap:6px; align-items:center; }
+    .modal-row select { flex:1; min-width:0; padding:6px; border-radius:7px; border:1px solid var(--border); font-size:12px; }
+    .modal-actions { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+    .modal-actions a { text-decoration:none; }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="title-row">
+      <h1>Gom Mặt v4</h1>
+      <span class="badge-model">ArcFace + MobileFaceNet • góc nghiêng 3D</span>
+    </div>
+    <div class="controls-grid">
+      <input type="file" id="fileInput" accept="image/*" multiple />
+      <button id="startBtn" class="btn" disabled>Đang tải AI...</button>
+    </div>
+    <div class="meta-row">
+      <label>Độ giống tối thiểu: <span id="thVal">0.40</span>
+        <input type="range" id="threshold" min="0.25" max="0.60" step="0.01" value="0.40" />
+      </label>
+      <label>Chính diện ≤ <span id="yawVal">20°</span>
+        <input type="range" id="yawMax" min="10" max="35" step="1" value="20" />
+      </label>
+      <button id="reverifyBtn" class="btn btn-sm btn-ghost" type="button" disabled>Kiểm tra lại Unsure</button>
+      <button id="clearAllBtn" class="btn btn-sm btn-danger" type="button">Xóa toàn bộ</button>
+    </div>
+    <div id="status">Đang tải mô hình AI...</div>
+    <div id="stats"></div>
+    <details class="rules">
+      <summary>Quy tắc gom nhóm</summary>
+      • Phương pháp 1: ArcFace. Phương pháp 2 (chỉ kiểm tra Unsure): MobileFaceNet của Human, ngưỡng tự hiệu chỉnh theo dữ liệu.<br/>
+      • Số người luôn ≤ 2/3 số mặt crop; vượt thì nhóm nhiều mặt nghiêng bị giải tán và các mặt được re-check vào người khác.<br/>
+      • Mặt bị loại khỏi người nào thì không quay lại người đó. Bị loại 2 lần hoặc không nhận ra thì vào Unsure.<br/>
+      • Kiểm tra lần 2 không tự lấy mặt ra khỏi nhóm đã gom; mặt đáng ngờ chỉ gắn nhãn "?".<br/>
+      • Đổi thanh trượt sẽ gom lại từ đầu.
+    </details>
+  </div>
+
+  <div id="peopleGrid" class="people-grid"></div>
+
+  <div class="unsure-panel" id="unsurePanel" style="display:none">
+    <div class="unsure-head">
+      <div class="unsure-title">Unsure (<span id="unsureCount">0</span>) — chưa chắc chắn</div>
+    </div>
+    <div id="unsureGrid" class="unsure-grid"></div>
+  </div>
+
+  <div id="modal" onclick="closeModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <img id="modalImg" src="" alt="" />
+      <div id="modalInfo" class="modal-info"></div>
+      <div class="modal-row">
+        <select id="moveSelect"></select>
+        <button id="moveBtn" class="btn btn-sm" type="button">Chuyển</button>
+      </div>
+      <div class="modal-actions">
+        <button id="notThisBtn" class="btn btn-sm btn-ghost" type="button">Không phải người này</button>
+        <a id="downloadLink" download="cropped_face.jpg"><button class="btn btn-sm btn-ghost" type="button">Tải ảnh</button></a>
+        <button id="deleteFaceBtn" class="btn btn-sm btn-danger" type="button">Xóa vĩnh viễn</button>
+        <button class="btn btn-sm btn-ghost" type="button" onclick="closeModal()">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+    const ARCFACE_URL = 'https://huggingface.co/immich-app/buffalo_s/resolve/main/recognition/model.onnx';
+    const ORT_BASE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/';
+    const HUMAN_MODELS = 'https://cdn.jsdelivr.net/npm/@vladmandic/human/models/';
+    const MOBILEFACENET_URL = 'https://vladmandic.github.io/human-models/models/mobilefacenet.json';
+    const MP_MODEL_URL = 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task';
+    const MP_WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+
+    const $ = (id) => document.getElementById(id);
+    const fileInput = $('fileInput'), startBtn = $('startBtn'), reverifyBtn = $('reverifyBtn'), clearAllBtn = $('clearAllBtn');
+    const statusEl = $('status'), statsEl = $('stats');
+    const thresholdInput = $('threshold'), thVal = $('thVal'), yawMaxInput = $('yawMax'), yawVal = $('yawVal');
+    const peopleGrid = $('peopleGrid'), unsurePanel = $('unsurePanel'), unsureGrid = $('unsureGrid'), unsureCountEl = $('unsureCount');
+    const modal = $('modal'), modalImg = $('modalImg'), modalInfo = $('modalInfo'), downloadLink = $('downloadLink');
+    const moveSelect = $('moveSelect'), moveBtn = $('moveBtn'), notThisBtn = $('notThisBtn'), deleteFaceBtn = $('deleteFaceBtn');
+
+    // ===== Hằng số =====
+    const MIN_FACE = 40;        // mặt nhỏ hơn (px) → Unsure, không dùng làm mốc gom
+    const STRONG_YAW = 40;      // lớn hơn = nghiêng nhiều (độ)
+    const CROP_PAD = 0.38;
+    const MAX_REMOVALS = 2;
+
+    // ===== Dữ liệu =====
+    let pool = [], groups = [], unsure = [], groupSeq = 0;
+    let appliedThreshold = parseFloat(thresholdInput.value);
+    let frontalMax = parseFloat(yawMaxInput.value);
+    let activeFaceId = null;
+    let arcSession = null, human = null, faceLandmarker = null;
+    let mpMode = '';                 // '', 'GPU' hoặc 'CPU'
+    let method2Ready = false, tau2 = null, sep2 = null, method2Note = '';
+    let scanNotes = { noFaceImages: 0, failedImages: [] };
+
+    // ===== Tiện ích =====
+    function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+    function cosine(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+    function l2normalize(v) {
+      let s = 0; for (let i = 0; i < v.length; i++) s += v[i] * v[i];
+      s = Math.sqrt(s) || 1;
+      const o = new Float32Array(v.length);
+      for (let i = 0; i < v.length; i++) o[i] = v[i] / s;
+      return o;
+    }
+    function meanVec(vs) {
+      const len = vs[0].length, o = new Float32Array(len);
+      for (const v of vs) for (let i = 0; i < len; i++) o[i] += v[i];
+      for (let i = 0; i < len; i++) o[i] /= vs.length;
+      return o;
+    }
+    function setStatus(msg, isErr = false) { statusEl.textContent = msg; statusEl.className = isErr ? 'err' : ''; }
+
+    // ===== Tải mô hình (mỗi mô hình phụ đều có thể lỗi mà app vẫn chạy) =====
+    window.addEventListener('load', async () => {
+      try {
+        await Promise.all([
+          faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+          faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL)
+        ]);
+      } catch (e) { setStatus('Lỗi tải mô hình dò mặt. Kiểm tra mạng và tải lại trang.', true); return; }
+
+      try {
+        setStatus('Đang tải ArcFace (khoảng 14MB)...');
+        ort.env.wasm.numThreads = 1;
+        ort.env.wasm.wasmPaths = ORT_BASE;
+        const res = await fetch(ARCFACE_URL);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        arcSession = await ort.InferenceSession.create(new Uint8Array(await res.arrayBuffer()), { executionProviders: ['wasm'] });
+      } catch (e) { console.error(e); setStatus('Lỗi tải mô hình ArcFace: ' + (e.message || e), true); return; }
+
+      setStatus('Đang tải MobileFaceNet (phương pháp 2) và MediaPipe (góc 3D)...');
+      await Promise.all([initHuman(), initMediaPipe()]);
+
+      const notes = [];
+      notes.push(human ? 'PP2 MobileFaceNet: sẵn sàng' : 'PP2: không khả dụng (' + method2Note + ')');
+      notes.push(faceLandmarker ? `Góc 3D: MediaPipe ${mpMode}` : 'Góc 3D: không khả dụng, dùng ước lượng 2D');
+      setStatus('AI sẵn sàng! ' + notes.join(' • '));
+      startBtn.textContent = 'Bắt đầu crop & gom mặt';
+      startBtn.disabled = false;
+    });
+
+    async function initHuman() {
+      try {
+        let w = 0; while (!window.Human && w < 50) { await new Promise(r => setTimeout(r, 100)); w++; }
+        if (!window.Human) throw new Error('không tải được thư viện Human');
+        human = new window.Human.Human({
+          backend: 'webgl', modelBasePath: HUMAN_MODELS, cacheSensitivity: 0, filter: { enabled: false },
+          face: {
+            enabled: true,
+            detector: { enabled: true, rotation: true, maxDetected: 3, minConfidence: 0.3 },
+            mesh: { enabled: true }, iris: { enabled: false }, attention: { enabled: false },
+            description: { enabled: false },
+            mobilefacenet: { enabled: true, modelPath: MOBILEFACENET_URL },
+            emotion: { enabled: false }, antispoof: { enabled: false }, liveness: { enabled: false }
+          },
+          body: { enabled: false }, hand: { enabled: false }, object: { enabled: false }, gesture: { enabled: false }, segmentation: { enabled: false }
+        });
+        await human.load();
+      } catch (e) { console.warn('Human lỗi:', e); human = null; method2Note = e.message || 'lỗi tải'; }
+    }
+
+    async function initMediaPipe() {
+      try {
+        let w = 0; while (!window.__MP_READY__ && w < 60) { await new Promise(r => setTimeout(r, 100)); w++; }
+        if (!window.__MP_VISION__) return;
+        const { FilesetResolver, FaceLandmarker } = window.__MP_VISION__;
+        const vision = await FilesetResolver.forVisionTasks(MP_WASM_URL);
+        for (const delegate of ['GPU', 'CPU']) { // iOS đôi khi không chạy được GPU → thử CPU
+          try {
+            faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+              baseOptions: { modelAssetPath: MP_MODEL_URL, delegate },
+              runningMode: 'IMAGE', numFaces: 1, outputFacialTransformationMatrixes: true
+            });
+            mpMode = delegate; return;
+          } catch (e) { console.warn('MediaPipe', delegate, 'lỗi:', e); faceLandmarker = null; }
+        }
+      } catch (e) { console.warn('MediaPipe lỗi:', e); faceLandmarker = null; }
+    }
+
+    // ===== PHƯƠNG PHÁP 1: ArcFace (căn chỉnh 112x112 + lật ảnh) =====
+    const ARC_TEMPLATE = [[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [41.5493, 92.3655], [70.7299, 92.2041]];
+    function avgPoint(pts, idxs) { let x = 0, y = 0; idxs.forEach(i => { x += pts[i].x; y += pts[i].y; }); return [x / idxs.length, y / idxs.length]; }
+    function similarityTransform(src, dst) {
+      const n = src.length;
+      const msx = src.reduce((s, p) => s + p[0], 0) / n, msy = src.reduce((s, p) => s + p[1], 0) / n;
+      const mdx = dst.reduce((s, p) => s + p[0], 0) / n, mdy = dst.reduce((s, p) => s + p[1], 0) / n;
+      let num1 = 0, num2 = 0, den = 0;
+      for (let i = 0; i < n; i++) {
+        const xs = src[i][0] - msx, ys = src[i][1] - msy, xd = dst[i][0] - mdx, yd = dst[i][1] - mdy;
+        num1 += xs * xd + ys * yd; num2 += xs * yd - ys * xd; den += xs * xs + ys * ys;
+      }
+      const a = num1 / den, b = num2 / den;
+      return { a, b, tx: mdx - (a * msx - b * msy), ty: mdy - (b * msx + a * msy) };
+    }
+    async function getArcEmbedding(sourceCanvas, landmarks) {
+      const pts = landmarks.positions;
+      const src = [avgPoint(pts, [36, 37, 38, 39, 40, 41]), avgPoint(pts, [42, 43, 44, 45, 46, 47]),
+        [pts[30].x, pts[30].y], [pts[48].x, pts[48].y], [pts[54].x, pts[54].y]];
+      const { a, b, tx, ty } = similarityTransform(src, ARC_TEMPLATE);
+      const aligned = document.createElement('canvas');
+      aligned.width = 112; aligned.height = 112;
+      const ctx = aligned.getContext('2d', { willReadFrequently: true });
+      ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+      ctx.setTransform(a, b, -b, a, tx, ty);
+      ctx.drawImage(sourceCanvas, 0, 0);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      const px = ctx.getImageData(0, 0, 112, 112).data;
+      aligned.width = 0; aligned.height = 0;
+      const plane = 112 * 112, data = new Float32Array(3 * plane), flip = new Float32Array(3 * plane);
+      for (let y = 0; y < 112; y++) for (let x = 0; x < 112; x++) {
+        const i = y * 112 + x, j = y * 112 + (111 - x), p = i * 4;
+        for (let c = 0; c < 3; c++) { const v = (px[p + c] - 127.5) / 127.5; data[c * plane + i] = v; flip[c * plane + j] = v; }
+      }
+      const run = async (arr) => {
+        const out = await arcSession.run({ [arcSession.inputNames[0]]: new ort.Tensor('float32', arr, [1, 3, 112, 112]) });
+        return l2normalize(Float32Array.from(out[arcSession.outputNames[0]].data));
+      };
+      const e1 = await run(data), e2 = await run(flip);
+      const sum = new Float32Array(e1.length);
+      for (let i = 0; i < sum.length; i++) sum[i] = e1[i] + e2[i];
+      return l2normalize(sum);
+    }
+
+    // ===== PHƯƠNG PHÁP 2: MobileFaceNet (Human tự dò + căn chỉnh trên ảnh crop) =====
+    async function getHumanEmbedding(canvas) {
+      if (!human) return null;
+      try {
+        const r = await human.detect(canvas);
+        const cx = canvas.width / 2, cy = canvas.height / 2;
+        let best = null, bd = Infinity;
+        for (const f of (r.face || [])) {
+          if (!f.embedding || !f.embedding.length || !f.box) continue;
+          const d = Math.hypot(f.box[0] + f.box[2] / 2 - cx, f.box[1] + f.box[3] / 2 - cy);
+          if (d < bd) { bd = d; best = f; }
+        }
+        return best ? Float32Array.from(best.embedding) : null;
+      } catch (e) { return null; }
+    }
+
+    // ===== GÓC NGHIÊNG =====
+    // 3D: ma trận biến đổi của MediaPipe (chạy trên ảnh crop chỉ có 1 mặt)
+    function yawFromMatrix(m) {
+      if (!m || m.length < 16) return null;
+      const deg = Math.abs(Math.atan2(m[8], m[10]) * 180 / Math.PI);
+      return Math.min(90, deg);
+    }
+    // 2D dự phòng: vị trí mũi so với giữa khung hàm (từ 68 điểm của face-api)
+    function yawFrom2D(pts) {
+      const w = pts[16].x - pts[0].x;
+      if (!(w > 1)) return 90;
+      const r = Math.min(1, 2 * Math.abs((pts[30].x - (pts[0].x + pts[16].x) / 2) / w));
+      return Math.asin(r) * 180 / Math.PI;
+    }
+
+    // ===== Đọc ảnh, crop =====
+    function loadImageToCanvas(file, maxSize = 1600) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxSize || height > maxSize) {
+            if (width > height) { height = Math.round((height * maxSize) / width); width = maxSize; }
+            else { width = Math.round((width * maxSize) / height); height = maxSize; }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          URL.revokeObjectURL(url);
+          resolve(canvas);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Không đọc được ảnh')); };
+        img.src = url;
+      });
+    }
+
+    // Khung crop có viền nhưng KHÔNG chạm khung mặt người khác trong cùng ảnh
+    function computeCropRect(box, others, W, H, padRatio) {
+      const px = box.width * padRatio, py = box.height * padRatio;
+      let L = Math.max(0, box.x - px), T = Math.max(0, box.y - py);
+      let R = Math.min(W, box.x + box.width + px), B = Math.min(H, box.y + box.height + py);
+      const fx1 = box.x, fx2 = box.x + box.width, fy1 = box.y, fy2 = box.y + box.height;
+      for (const o of others) {
+        const ox1 = o.x, ox2 = o.x + o.width, oy1 = o.y, oy2 = o.y + o.height;
+        if (ox2 <= L || ox1 >= R || oy2 <= T || oy1 >= B) continue;
+        const opts = [];
+        if (ox2 <= fx1) opts.push({ s: 'L', v: ox2, loss: (ox2 - L) * (B - T) });
+        if (ox1 >= fx2) opts.push({ s: 'R', v: ox1, loss: (R - ox1) * (B - T) });
+        if (oy2 <= fy1) opts.push({ s: 'T', v: oy2, loss: (oy2 - T) * (R - L) });
+        if (oy1 >= fy2) opts.push({ s: 'B', v: oy1, loss: (B - oy1) * (R - L) });
+        if (opts.length) {
+          opts.sort((p, q) => p.loss - q.loss);
+          const c = opts[0];
+          if (c.s === 'L') L = Math.max(L, c.v); else if (c.s === 'R') R = Math.min(R, c.v);
+          else if (c.s === 'T') T = Math.max(T, c.v); else B = Math.min(B, c.v);
+        } else { L = Math.max(0, fx1); R = Math.min(W, fx2); T = Math.max(0, fy1); B = Math.min(H, fy2); }
+      }
+      return { x: L, y: T, w: Math.max(8, R - L), h: Math.max(8, B - T) };
+    }
+    function cropRectToCanvas(src, rect, outSize = 512) {
+      const scale = outSize / Math.max(rect.w, rect.h);
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(rect.w * scale));
+      c.height = Math.max(1, Math.round(rect.h * scale));
+      c.getContext('2d').drawImage(src, rect.x, rect.y, rect.w, rect.h, 0, 0, c.width, c.height);
+      return c;
+    }
+    function estimateSharpness(source) {
+      const c = document.createElement('canvas'); c.width = 96; c.height = 96;
+      const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(source, 0, 0, 96, 96);
+      const d = x.getImageData(0, 0, 96, 96).data, vals = [];
+      const g = (px, py) => { const i = (py * 96 + px) * 4; return .299 * d[i] + .587 * d[i + 1] + .114 * d[i + 2]; };
+      for (let y = 1; y < 95; y++) for (let xx = 1; xx < 95; xx++)
+        vals.push(4 * g(xx, y) - g(xx - 1, y) - g(xx + 1, y) - g(xx, y - 1) - g(xx, y + 1));
+      const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const variance = vals.reduce((a, b) => a + (b - mean) ** 2, 0) / vals.length;
+      c.width = 0; c.height = 0;
+      return Math.round(variance);
+    }
+
+    // ===== BƯỚC 1: quét ảnh, crop từng mặt (không bỏ sót mặt nào) =====
+    startBtn.addEventListener('click', async () => {
+      const files = Array.from(fileInput.files || []);
+      if (!files.length) { setStatus('Vui lòng chọn ít nhất 1 ảnh trước.', true); return; }
+
+      startBtn.disabled = true; reverifyBtn.disabled = true;
+      pool = []; groups = []; unsure = []; groupSeq = 0;
+      peopleGrid.innerHTML = ''; unsureGrid.innerHTML = ''; unsurePanel.style.display = 'none'; statsEl.textContent = '';
+
+      const detectorOptions = new faceapi.SsdMobilenetv1Options({ minConfidence: 0.50 });
+      let counter = 0, noFaceImages = 0; const failedImages = [];
+
+      for (let i = 0; i < files.length; i++) {
+        setStatus(`Đang tách khuôn mặt từ ảnh ${i + 1} / ${files.length}...`);
+        await new Promise(r => setTimeout(r, 15));
+        try {
+          const canvas = await loadImageToCanvas(files[i], 2400);
+          let items;
+          try {
+            const dets = await faceapi.detectAllFaces(canvas, detectorOptions).withFaceLandmarks();
+            items = dets.map(d => ({ box: d.detection.box, score: d.detection.score, landmarks: d.landmarks }));
+          } catch (e1) {
+            const dets = await faceapi.detectAllFaces(canvas, detectorOptions); // vẫn giữ mặt, đưa vào Unsure
+            items = dets.map(d => ({ box: d.box, score: d.score, landmarks: null }));
+          }
+          if (!items.length) noFaceImages++;
+
+          const baseName = files[i].name.replace(/\.[^.]+$/, '');
+          for (let idx = 0; idx < items.length; idx++) {
+            const it = items[idx];
+            const others = items.filter((_, j) => j !== idx).map(o => o.box);
+            const rect = computeCropRect(it.box, others, canvas.width, canvas.height, CROP_PAD);
+            const cropCanvas = cropRectToCanvas(canvas, rect, 512);
+            const croppedUrl = cropCanvas.toDataURL('image/jpeg', 0.92);
+            const sharpness = estimateSharpness(cropCanvas);
+
+            // Góc nghiêng 3D từ MediaPipe (trên ảnh crop), dự phòng 2D
+            let yaw = null, yawSrc = '';
+            if (faceLandmarker) {
+              try {
+                const r = faceLandmarker.detect(cropCanvas);
+                const m = r.facialTransformationMatrixes && r.facialTransformationMatrixes[0];
+                if (m) { yaw = yawFromMatrix(m.data); if (yaw != null) yawSrc = '3D'; }
+              } catch (e) { /* dùng 2D */ }
+            }
+            if (yaw == null) { yaw = it.landmarks ? yawFrom2D(it.landmarks.positions) : 90; yawSrc = it.landmarks ? '2D' : '?'; }
+
+            // Phương pháp 1 và 2
+            let descriptor = null;
+            if (it.landmarks && arcSession) {
+              try { descriptor = await getArcEmbedding(canvas, it.landmarks); }
+              catch (embErr) { console.warn('ArcFace lỗi:', embErr); }
+            }
+            const emb2raw = await getHumanEmbedding(cropCanvas);
+            cropCanvas.width = 0; cropCanvas.height = 0;
+
+            const size = Math.min(it.box.width, it.box.height);
+            counter++;
+            pool.push({
+              faceId: `face_${counter}`, fileName: `${baseName}_mat${idx + 1}.jpg`,
+              croppedUrl, sharpness, size, yaw, yawSrc, frontal: false,
+              score: it.score,
+              descriptor,           // ArcFace (phương pháp 1)
+              emb2raw, emb2: null,  // MobileFaceNet (phương pháp 2)
+              tooSmall: size < MIN_FACE, quality: 0,
+              removals: 0, excluded: new Set(),
+              manual: false, provisional: false, verified: false, weak: false, reason: ''
+            });
+          }
+          canvas.width = 0; canvas.height = 0;
+        } catch (err) {
+          console.warn('Không xử lý được file:', files[i].name, err);
+          failedImages.push(files[i].name);
+        }
+      }
+
+      scanNotes = { noFaceImages, failedImages };
+      if (!pool.length) { setStatus('Không tìm thấy khuôn mặt nào trong các ảnh đã chọn.', true); startBtn.disabled = false; return; }
+
+      // Căn giữa embedding phương pháp 2 (trừ vector trung bình) để so sánh cosine tách bạch hơn
+      const withE2 = pool.filter(f => f.emb2raw);
+      method2Note = human ? '' : method2Note;
+      if (human && !withE2.length) method2Note = 'Human không trả embedding';
+      if (withE2.length >= 8) {
+        const m = meanVec(withE2.map(f => f.emb2raw));
+        withE2.forEach(f => { f.emb2 = l2normalize(f.emb2raw.map((v, i) => v - m[i])); });
+      } else {
+        withE2.forEach(f => { f.emb2 = l2normalize(f.emb2raw); });
+      }
+      buildAll();
+      startBtn.disabled = false;
+    });
+
+    // ===== Mô hình nhóm =====
+    function groupOf(face) { return groups.find(g => g.faces.includes(face)) || null; }
+    function locate(faceId) { const face = pool.find(f => f.faceId === faceId); return face ? { face, group: groupOf(face) } : null; }
+
+    function classify() {
+      frontalMax = parseFloat(yawMaxInput.value);
+      pool.forEach(f => {
+        f.frontal = f.yaw <= frontalMax;
+        f.quality = f.score * Math.min(1, f.size / 120) * (f.frontal ? 1 : 0.6) * (f.sharpness < 35 ? 0.7 : 1);
+      });
+    }
+
+    function refreshGroup(g) {
+      const core = g.faces.filter(f => !f.provisional && f.descriptor);
+      const frontalCore = core.filter(f => f.frontal && !f.tooSmall);
+      const base = frontalCore.length ? frontalCore : core;
+      g.centroid = base.length ? l2normalize(meanVec(base.map(f => f.descriptor))) : null;
+      const base2 = base.filter(f => f.emb2);
+      g.centroid2 = base2.length ? l2normalize(meanVec(base2.map(f => f.emb2))) : null;
+      const ref = [...g.faces].sort((a, b) => b.quality - a.quality)[0];
+      if (ref) { g.refUrl = ref.croppedUrl; g.bestScore = ref.score; }
+    }
+    function newGroup(face) {
+      const g = { id: ++groupSeq, name: '', faces: [face], locked: false, centroid: null, centroid2: null, refUrl: '', bestScore: 0 };
+      face.provisional = false; face.reason = '';
+      refreshGroup(g); groups.push(g); return g;
+    }
+    function addToGroup(g, face, provisional) {
+      unsure = unsure.filter(f => f !== face);
+      face.provisional = provisional; face.reason = '';
+      g.faces.push(face); refreshGroup(g);
+    }
+    function toUnsure(face, reason) { face.reason = reason; face.provisional = false; if (!unsure.includes(face)) unsure.push(face); }
+    function detachFace(face) {
+      unsure = unsure.filter(f => f !== face);
+      const g = groupOf(face);
+      if (g) {
+        g.faces = g.faces.filter(f => f !== face);
+        if (!g.faces.length) groups.splice(groups.indexOf(g), 1); else refreshGroup(g);
+      }
+      return g;
+    }
+
+    function groupSims(face, g) {
+      if (!g.centroid || !face.descriptor) return null;
+      const core = g.faces.filter(x => x !== face && !x.provisional && x.descriptor);
+      if (!core.length) return null;
+      const simC = cosine(face.descriptor, g.centroid);
+      let simN = -1;
+      for (const x of core) { const s = cosine(face.descriptor, x.descriptor); if (s > simN) simN = s; }
+      return { simC, simN, score: 0.6 * simC + 0.4 * simN };
+    }
+    function groupSims2(face, g) {
+      if (!g.centroid2 || !face.emb2) return null;
+      const core = g.faces.filter(x => x !== face && !x.provisional && x.emb2);
+      if (!core.length) return null;
+      const simC = cosine(face.emb2, g.centroid2);
+      let simN = -1;
+      for (const x of core) { const s = cosine(face.emb2, x.emb2); if (s > simN) simN = s; }
+      return 0.6 * simC + 0.4 * simN;
+    }
+
+    // Ngưỡng của phương pháp 2 tự hiệu chỉnh: điểm giữa "cùng nhóm" và "khác nhóm" trên chính dữ liệu của bạn
+    function calibrate2() {
+      method2Ready = false; tau2 = null; sep2 = null;
+      const inS = [], outS = [];
+      for (const g of groups) {
+        const core = g.faces.filter(f => !f.provisional && f.emb2);
+        for (let i = 0; i < core.length && inS.length < 600; i++)
+          for (let j = i + 1; j < core.length && inS.length < 600; j++) inS.push(cosine(core[i].emb2, core[j].emb2));
+      }
+      for (let a = 0; a < groups.length && outS.length < 600; a++) {
+        const ca = groups[a].faces.filter(f => !f.provisional && f.emb2).slice(0, 6);
+        for (let b = a + 1; b < groups.length && outS.length < 600; b++) {
+          const cb = groups[b].faces.filter(f => !f.provisional && f.emb2).slice(0, 6);
+          for (const x of ca) for (const y of cb) outS.push(cosine(x.emb2, y.emb2));
+        }
+      }
+      if (inS.length < 5 || outS.length < 5) { method2Note = method2Note || 'chưa đủ dữ liệu để hiệu chỉnh'; return; }
+      const mi = inS.reduce((s, v) => s + v, 0) / inS.length, mo = outS.reduce((s, v) => s + v, 0) / outS.length;
+      sep2 = mi - mo;
+      if (sep2 < 0.12) { method2Note = 'PP2 không tách được các nhóm (chênh lệch ' + sep2.toFixed(2) + '), không dùng'; return; }
+      tau2 = (mi + mo) / 2; method2Ready = true; method2Note = '';
+    }
+
+    function assignGreedy(face, thr) {
+      const rows = [];
+      for (const g of groups) {
+        const s = groupSims(face, g);
+        if (!s) continue;
+        const ok = face.frontal ? (s.score >= thr && s.simN >= thr + 0.03) : (s.score >= thr - 0.04);
+        rows.push({ g, s, ok });
+      }
+      const okRows = rows.filter(r => r.ok).sort((a, b) => b.s.score - a.s.score);
+      if (!okRows.length) return { group: null, ambiguous: false };
+      if (!face.frontal) {
+        const all = rows.slice().sort((a, b) => b.s.score - a.s.score);
+        if (all.length > 1 && all[0].s.score - all[1].s.score < 0.04) return { group: null, ambiguous: true };
+      }
+      return { group: okRows[0].g, ambiguous: false };
+    }
+
+    // Đặt mặt vào nhóm khác khi 2 phương pháp đồng thuận (không bao giờ vào nhóm đã loại mặt này)
+    function placeByAgreement(face, mode) {
+      if (!face.descriptor) return null;
+      const thr = appliedThreshold;
+      const useB = method2Ready && !!face.emb2;
+      if (mode === 'verify' && !useB) return null; // kiểm tra Unsure bắt buộc có phương pháp 2
+      const P = mode === 'verify' ? { minA: thr - 0.08, marginA: 0.02, minB: tau2, marginB: 0.02, same: true }
+        : useB ? { minA: thr - 0.05, marginA: 0, minB: tau2 - 0.03, marginB: 0, same: false, tol: 0.04 }
+          : { minA: thr - 0.02, marginA: 0.03 };
+      const rows = [];
+      for (const g of groups) {
+        if (face.excluded.has(g.id)) continue;
+        const s = groupSims(face, g); if (!s) continue;
+        rows.push({ g, s, s2: useB ? groupSims2(face, g) : null });
+      }
+      if (!rows.length) return null;
+      const byA = [...rows].sort((a, b) => b.s.score - a.s.score);
+      const a1 = byA[0], a2 = byA[1];
+      if (a1.s.score < P.minA) return null;
+      if (a2 && a1.s.score - a2.s.score < P.marginA) return null;
+      if (useB) {
+        if (a1.s2 == null || a1.s2 < P.minB) return null;
+        const withB = rows.filter(r => r.s2 != null).sort((a, b) => b.s2 - a.s2);
+        const b1 = withB[0], b2 = withB[1];
+        if (P.same) {
+          if (b1.g !== a1.g) return null;
+          if (b2 && b1.s2 - b2.s2 < P.marginB) return null;
+        } else if (a1.s2 < b1.s2 - P.tol) return null;
+      }
+      return a1.g;
+    }
+
+    function recheck(face) {
+      if (face.removals >= MAX_REMOVALS) { toUnsure(face, 'Đã bị loại 2 lần'); return; }
+      const target = placeByAgreement(face, 'recheck');
+      if (target) addToGroup(target, face, true); else toUnsure(face, 'Không khớp người nào khác');
+    }
+
+    function dissolveGroup(g) {
+      const idx = groups.indexOf(g);
+      if (idx < 0) return { placed: 0, unsure: 0 };
+      groups.splice(idx, 1);
+      const faces = g.faces.slice().sort((a, b) => b.quality - a.quality);
+      faces.forEach(f => { f.removals++; f.excluded.add(g.id); f.provisional = false; f.manual = false; f.verified = false; f.reason = ''; });
+      let placed = 0, uns = 0;
+      faces.forEach(f => { recheck(f); if (groupOf(f)) placed++; else uns++; });
+      return { placed, unsure: uns };
+    }
+
+    function personLimit() { return Math.max(1, Math.floor(pool.length * 2 / 3)); }
+    function enforceLimit() {
+      let dissolved = 0, guard = 0;
+      while (groups.length > personLimit() && guard++ < 2000) {
+        const cands = groups.filter(g => !g.locked);
+        if (!cands.length) break;
+        const info = cands.map(g => {
+          const ratio = g.faces.filter(f => !f.frontal).length / g.faces.length;
+          return { g, ratio, size: g.faces.length, tier: ratio >= 0.5 ? 0 : (ratio > 0 ? 1 : 2) };
+        });
+        info.sort((p, q) => p.tier - q.tier || p.size - q.size || q.ratio - p.ratio);
+        dissolveGroup(info[0].g); dissolved++;
+      }
+      return dissolved;
+    }
+
+    // Chỉ thêm mặt Unsure vào nhóm, KHÔNG lấy mặt ra khỏi nhóm nào
+    function verifyUnsure() {
+      let rescued = 0;
+      for (const f of unsure.slice()) {
+        if (f.removals >= MAX_REMOVALS) continue;
+        const t = placeByAgreement(f, 'verify');
+        if (t) { addToGroup(t, f, true); f.verified = true; rescued++; }
+      }
+      return rescued;
+    }
+
+    // Chỉ GẮN NHÃN mặt đáng ngờ (cả 2 phương pháp thấy lạ), không tự di chuyển
+    function annotateWeak() {
+      pool.forEach(f => { f.weak = false; });
+      if (!method2Ready) return;
+      const thr = appliedThreshold;
+      for (const g of groups) {
+        const core = g.faces.filter(f => !f.provisional && f.descriptor && f.emb2);
+        if (core.length < 3) continue;
+        for (const f of g.faces) {
+          if (!f.descriptor || !f.emb2) continue;
+          const others = core.filter(x => x !== f);
+          if (others.length < 2) continue;
+          const sA = cosine(f.descriptor, l2normalize(meanVec(others.map(x => x.descriptor))));
+          const sB = cosine(f.emb2, l2normalize(meanVec(others.map(x => x.emb2))));
+          if (sA < thr + 0.02 && sB < tau2) f.weak = true;
+        }
+      }
+    }
+
+    function finalize() {
+      groups.sort((a, b) => b.faces.length - a.faces.length);
+      groups.forEach((g, i) => { if (!g.name || /^Người \d+$/.test(g.name)) g.name = `Người ${i + 1}`; });
+      annotateWeak(); renderAll(); updateStats();
+      reverifyBtn.disabled = !unsure.length;
+    }
+    function updateStats() {
+      const n = pool.length, placed = groups.reduce((s, g) => s + g.faces.length, 0);
+      const m2 = method2Ready ? `PP2 sẵn sàng (ngưỡng ${tau2.toFixed(2)}, tách ${sep2.toFixed(2)})` : `PP2 không dùng${method2Note ? ': ' + method2Note : ''}`;
+      statsEl.textContent = `${n} mặt • ${groups.length} người (tối đa ${personLimit()}) • ${unsure.length} Unsure • ${placed + unsure.length === n ? 'đủ mặt, không bỏ sót' : 'CẢNH BÁO: lệch số mặt'} • ${m2}`;
+    }
+
+    // ===== BƯỚC 2: gom nhóm =====
+    function buildAll() {
+      const thr = parseFloat(thresholdInput.value);
+      appliedThreshold = thr;
+      groups = []; unsure = []; groupSeq = 0;
+      pool.forEach(f => { f.removals = 0; f.excluded = new Set(); f.manual = false; f.provisional = false; f.verified = false; f.weak = false; f.reason = ''; });
+      classify();
+
+      const ordered = [...pool].sort((a, b) => (Number(b.frontal) - Number(a.frontal)) || (b.quality - a.quality));
+      for (const f of ordered) {
+        if (!f.descriptor) { toUnsure(f, 'Không trích được đặc trưng'); continue; }
+        if (f.tooSmall) { toUnsure(f, 'Mặt quá nhỏ'); continue; }
+        const r = assignGreedy(f, thr);
+        if (r.group) addToGroup(r.group, f, false);
+        else if (r.ambiguous) toUnsure(f, 'Mơ hồ giữa nhiều người');
+        else newGroup(f);
+      }
+
+      calibrate2();
+      const dissolved = enforceLimit();
+      const rescued = verifyUnsure();
+      finalize();
+
+      let msg = `Hoàn tất: ${pool.length} mặt → ${groups.length} người, ${unsure.length} Unsure.`;
+      if (dissolved) msg += ` Giải tán ${dissolved} nhóm mặt nghiêng để giữ số người ≤ 2/3 số mặt.`;
+      if (rescued) msg += ` PP2 cứu thêm ${rescued} mặt Unsure.`;
+      if (scanNotes.noFaceImages) msg += ` ${scanNotes.noFaceImages} ảnh không dò thấy mặt.`;
+      if (scanNotes.failedImages.length) msg += ` Không đọc được: ${scanNotes.failedImages.join(', ')}.`;
+      setStatus(msg);
+    }
+
+    // ===== Thao tác của người dùng =====
+    function userRemoveFromGroup(face) {
+      const g = detachFace(face); if (!g) return;
+      face.removals++; face.excluded.add(g.id); face.manual = false; face.provisional = false; face.verified = false;
+      recheck(face); finalize();
+      const now = groupOf(face);
+      setStatus(now ? `Đã re-scan: mặt chuyển sang "${now.name}".` : 'Đã re-scan: chưa đủ chắc chắn nên mặt vào Unsure.');
+    }
+    function moveFace(face, target) {
+      detachFace(face);
+      if (target === 'unsure') { toUnsure(face, 'Chuyển thủ công'); face.manual = false; }
+      else {
+        const g = groups.find(x => x.id === Number(target));
+        if (!g) toUnsure(face, 'Chuyển thủ công');
+        else { addToGroup(g, face, false); face.manual = true; g.locked = true; }
+      }
+      finalize();
+    }
+    function mergeGroupsById(srcId, dstId) {
+      const src = groups.find(g => g.id === srcId), dst = groups.find(g => g.id === dstId);
+      if (!src || !dst || src === dst) return;
+      for (const f of src.faces) if (!dst.faces.includes(f)) dst.faces.push(f);
+      groups.splice(groups.indexOf(src), 1);
+      dst.locked = true; refreshGroup(dst); finalize();
+      setStatus(`Đã gộp "${src.name}" vào "${dst.name}".`);
+    }
+    function removeFacePermanent(faceId) {
+      const loc = locate(faceId); if (!loc) return;
+      detachFace(loc.face); pool = pool.filter(f => f.faceId !== faceId);
+      closeModal(); finalize(); setStatus('Đã xóa vĩnh viễn ảnh crop khỏi bộ dữ liệu.');
+    }
+
+    function onParamChange() {
+      if (!pool.length) return;
+      const edited = pool.some(f => f.manual) || groups.some(g => g.locked);
+      if (edited && !confirm('Đổi thông số sẽ gom lại từ đầu và mất các chỉnh sửa thủ công (đổi tên, gộp nhóm, chuyển mặt). Tiếp tục?')) {
+        thresholdInput.value = appliedThreshold; thVal.textContent = appliedThreshold.toFixed(2);
+        yawMaxInput.value = frontalMax; yawVal.textContent = `${frontalMax}°`;
+        return;
+      }
+      buildAll();
+    }
+    thresholdInput.addEventListener('input', () => { thVal.textContent = parseFloat(thresholdInput.value).toFixed(2); });
+    yawMaxInput.addEventListener('input', () => { yawVal.textContent = `${yawMaxInput.value}°`; });
+    thresholdInput.addEventListener('change', onParamChange);
+    yawMaxInput.addEventListener('change', onParamChange);
+
+    reverifyBtn.addEventListener('click', () => {
+      calibrate2();
+      const r = verifyUnsure(); finalize();
+      if (!method2Ready) setStatus(`Chưa kiểm tra được: phương pháp 2 không khả dụng${method2Note ? ' (' + method2Note + ')' : ''}. Còn ${unsure.length} mặt Unsure.`, true);
+      else setStatus(r ? `Kiểm tra lại bằng PP2: đã xếp thêm ${r} mặt vào đúng người. Còn ${unsure.length} Unsure.`
+                       : `Kiểm tra lại bằng PP2: chưa mặt nào đủ chắc chắn. Còn ${unsure.length} Unsure.`);
+    });
+    clearAllBtn.addEventListener('click', () => {
+      if (!pool.length) return;
+      if (!confirm('Xóa toàn bộ ảnh crop và các nhóm hiện tại?')) return;
+      closeModal(); pool = []; groups = []; unsure = [];
+      peopleGrid.innerHTML = ''; unsureGrid.innerHTML = ''; unsurePanel.style.display = 'none'; statsEl.textContent = '';
+      reverifyBtn.disabled = true; setStatus('Đã xóa toàn bộ dữ liệu crop trong phiên làm việc.');
+    });
+
+    // ===== Hiển thị =====
+    function poseLabel(f) {
+      const d = f.yawSrc === '?' ? 'không rõ' : `~${Math.round(f.yaw)}° (${f.yawSrc})`;
+      return `${f.frontal ? 'Chính diện' : (f.yaw > STRONG_YAW ? 'Nghiêng nhiều' : 'Nghiêng')} ${d}`;
+    }
+    function buildTile(face, inGroup) {
+      const t = el('div', 'face-item');
+      const img = document.createElement('img');
+      img.src = face.croppedUrl; img.alt = '';
+      img.onclick = () => openModal(face.faceId);
+      if (!inGroup && face.reason) img.title = face.reason;
+      t.appendChild(img);
+      if (inGroup) {
+        const x = el('button', 'del-x', '×'); x.type = 'button'; x.title = 'Không phải người này (re-scan)';
+        x.onclick = (ev) => { ev.stopPropagation(); userRemoveFromGroup(face); };
+        t.appendChild(x);
+      }
+      t.appendChild(el('span', 'pose-tag', face.yawSrc === '?' ? '?' : `${Math.round(face.yaw)}°`));
+      if (face.sharpness < 35) t.appendChild(el('span', 'blur-tag', 'Mờ'));
+      if (face.weak) t.appendChild(el('span', 'flag warn', '?'));
+      else if (face.verified) t.appendChild(el('span', 'flag ok', '✓'));
+      return t;
+    }
+
+    function renderAll() {
+      peopleGrid.innerHTML = '';
+      groups.forEach((g, idx) => {
+        const card = el('div', 'person-card' + (g.locked ? ' locked' : ''));
+        const head = el('div', 'person-head');
+        const av = document.createElement('img'); av.className = 'avatar'; av.src = g.refUrl; av.alt = '';
+        const nameInput = el('input', 'name-compact'); nameInput.value = g.name;
+        nameInput.addEventListener('change', () => { g.name = nameInput.value.trim() || `Người ${idx + 1}`; g.locked = true; renderAll(); });
+        head.append(av, nameInput, el('span', 'cnt-pill', String(g.faces.length)));
+
+        const mini = el('div', 'merge-mini');
+        const sel = document.createElement('select');
+        const others = groups.filter(o => o !== g);
+        others.forEach(o => { const op = document.createElement('option'); op.value = String(o.id); op.textContent = `→ ${o.name}`; sel.appendChild(op); });
+        if (!others.length) { const op = document.createElement('option'); op.textContent = '—'; sel.appendChild(op); }
+        const mergeBtn = el('button', 'btn btn-sm btn-ghost', 'Gộp'); mergeBtn.type = 'button'; mergeBtn.disabled = !others.length;
+        mergeBtn.onclick = () => mergeGroupsById(g.id, Number(sel.value));
+        const delBtn = el('button', 'btn btn-sm btn-danger', 'Xóa'); delBtn.type = 'button'; delBtn.title = 'Xóa người này: các mặt được re-scan vào người khác, không mất mặt nào';
+        delBtn.onclick = () => {
+          if (!confirm(`Xóa người "${g.name}"?\n${g.faces.length} mặt sẽ được re-scan vào người khác giống hơn; mặt không khớp vào Unsure. Không mặt nào bị mất.`)) return;
+          const r = dissolveGroup(g); finalize();
+          setStatus(`Đã xóa "${g.name}": ${r.placed} mặt chuyển sang người khác, ${r.unsure} mặt vào Unsure.`);
+        };
+        mini.append(sel, mergeBtn, delBtn);
+
+        const sub = el('div', 'faces-subgrid');
+        g.faces.forEach(face => sub.appendChild(buildTile(face, true)));
+        card.append(head, mini, sub);
+        peopleGrid.appendChild(card);
+      });
+
+      unsureCountEl.textContent = String(unsure.length);
+      unsureGrid.innerHTML = '';
+      unsure.forEach(face => unsureGrid.appendChild(buildTile(face, false)));
+      unsurePanel.style.display = unsure.length ? '' : 'none';
+    }
+
+    function openModal(faceId) {
+      const loc = locate(faceId); if (!loc) return;
+      const { face, group } = loc;
+      activeFaceId = faceId;
+      modalImg.src = face.croppedUrl;
+      downloadLink.href = face.croppedUrl; downloadLink.download = face.fileName;
+      const where = group ? `Nhóm: ${group.name}` : `Unsure${face.reason ? ' (' + face.reason + ')' : ''}`;
+      modalInfo.textContent = `${where} • ${poseLabel(face)} • Độ nét: ${face.sharpness} • Số lần bị loại: ${face.removals}${face.weak ? ' • Đáng ngờ: cả 2 phương pháp thấy khác nhóm' : ''}`;
+      moveSelect.innerHTML = '';
+      groups.forEach(g => { if (g === group) return; const o = document.createElement('option'); o.value = String(g.id); o.textContent = `Chuyển sang ${g.name}`; moveSelect.appendChild(o); });
+      if (group) { const o = document.createElement('option'); o.value = 'unsure'; o.textContent = 'Chuyển sang Unsure'; moveSelect.appendChild(o); }
+      moveBtn.disabled = !moveSelect.options.length;
+      notThisBtn.style.display = group ? '' : 'none';
+      modal.style.display = 'flex';
+    }
+    function closeModal() { modal.style.display = 'none'; activeFaceId = null; }
+
+    moveBtn.addEventListener('click', () => {
+      if (!activeFaceId || !moveSelect.value) return;
+      const loc = locate(activeFaceId); if (!loc) return;
+      moveFace(loc.face, moveSelect.value); closeModal();
+    });
+    notThisBtn.addEventListener('click', () => {
+      const loc = activeFaceId && locate(activeFaceId);
+      if (!loc || !loc.group) return;
+      closeModal(); userRemoveFromGroup(loc.face);
+    });
+    deleteFaceBtn.addEventListener('click', () => {
+      if (!activeFaceId) return;
+      if (confirm('Xóa vĩnh viễn ảnh crop này khỏi bộ dữ liệu? (Khác "Không phải người này": mặt sẽ không được re-scan nữa)')) removeFacePermanent(activeFaceId);
+    });
+  </script>
+</body>
+</html>
