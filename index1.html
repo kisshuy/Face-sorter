@@ -1,0 +1,2136 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Face Sorter v10 — Tile Scan, Audit & Protected DB</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.5/dist/human.js"></script>
+  <script type="module">
+    import { FilesetResolver, FaceLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+    window.__MP_VISION__ = { FilesetResolver, FaceLandmarker };
+  </script>
+  <style>
+    :root {
+      --bg: #eef1f5;
+      --card: #ffffff;
+      --text: #18202c;
+      --muted: #5c6778;
+      --accent: #0f62fe;
+      --accent-soft: #e6efff;
+      --ok: #15803d;
+      --ok-soft: #dcfce7;
+      --danger: #c62828;
+      --warn: #b45309;
+      --border: #dfe4ec;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 10px 10px 48px 10px;
+    }
+    .topbar {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+    }
+    h1 { font-size: 16px; margin: 0; font-weight: 700; }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      position: relative;
+    }
+    .db-pill {
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 4px 8px;
+      border-radius: 999px;
+    }
+
+    .upload-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .btn:disabled { background: #aeb8c7; cursor: not-allowed; }
+    .btn-ghost { background: #f2f4f8; color: var(--text); border: 1px solid var(--border); }
+    .btn-ok { background: var(--ok); color: #fff; }
+    .btn-danger { background: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
+    .btn-sm { padding: 4px 8px; font-size: 11.5px; border-radius: 7px; }
+
+    /* Menu ⋯ gọn gàng */
+    .more-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 34px;
+      z-index: 950;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 6px;
+      min-width: 195px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+      flex-direction: column;
+      gap: 4px;
+    }
+    .more-menu.open { display: flex; }
+    .more-menu button {
+      text-align: left;
+      width: 100%;
+      background: transparent;
+      border: none;
+      padding: 7px 9px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      border-radius: 7px;
+      cursor: pointer;
+    }
+    .more-menu button:hover { background: #f1f5f9; }
+    .more-menu button.danger-item { color: var(--danger); }
+    .menu-sep { height: 1px; background: var(--border); margin: 2px 0; }
+
+    .originals-roll {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      flex: 1;
+      min-height: 44px;
+      padding: 3px 6px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+    }
+    .orig-thumb {
+      position: relative;
+      width: 38px;
+      height: 38px;
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+      border: 1px solid #cbd5e1;
+      cursor: pointer;
+    }
+    .orig-thumb.zero-face { border: 1.5px solid var(--danger); }
+    .orig-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .orig-idx {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      font-size: 8.5px;
+      background: rgba(15, 23, 42, 0.74);
+      color: #fff;
+      padding: 0 3px;
+      border-top-left-radius: 4px;
+    }
+
+    .meta-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+    .meta-row label { display: flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text); }
+    input[type="range"] { width: 96px; }
+    .adv-box {
+      display: none;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding-top: 4px;
+      border-top: 1px dashed var(--border);
+    }
+    .adv-box.open { display: flex; }
+
+    .stats-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      background: #f6f9ff;
+      border: 1px solid #d9e6ff;
+      padding: 5px 9px;
+      border-radius: 8px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .stats-row.err { color: var(--danger); background: #fef2f2; border-color: #fecaca; }
+
+    /* Bảng đối soát theo từng ảnh (thu gọn/mở rộng) */
+    .audit-panel {
+      display: none;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 6px;
+      max-height: 185px;
+      overflow-y: auto;
+      font-size: 11px;
+    }
+    .audit-panel.open { display: block; }
+    .audit-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .audit-table th, .audit-table td {
+      padding: 4px 5px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    .audit-table th { color: var(--muted); font-weight: 600; }
+    .badge-zero { color: var(--danger); font-weight: 700; }
+    .badge-ok { color: var(--ok); font-weight: 700; }
+
+    /* Thanh Chưa chắc (Unsure) */
+    .unsure-strip {
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-radius: 11px;
+      padding: 6px 8px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 58px;
+    }
+    .unsure-badge {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--warn);
+      background: #fef3c7;
+      padding: 3px 6px;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    .unsure-scroll {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      flex: 1;
+      align-items: center;
+    }
+    .unsure-thumb {
+      position: relative;
+      width: 46px;
+      height: 46px;
+      border-radius: 7px;
+      overflow: hidden;
+      flex-shrink: 0;
+      border: 1px solid #f59e0b;
+      background: #eee;
+    }
+    .unsure-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      cursor: pointer;
+      display: block;
+    }
+
+    /* Lưới 2 cột */
+    .people-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+      align-items: start;
+    }
+    .person-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px;
+      min-width: 0;
+    }
+    .person-head {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: 6px;
+    }
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      border: 1.5px solid var(--accent);
+      background: #e2e8f0;
+    }
+    .name-compact {
+      flex: 1;
+      min-width: 0;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 5px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .confirm-btn {
+      padding: 3px 7px;
+      font-size: 11px;
+      border-radius: 6px;
+      border: 1px solid #bbf7d0;
+      background: var(--ok-soft);
+      color: var(--ok);
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .cnt-pill {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .faces-subgrid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 4px;
+    }
+    .face-item {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #e9edf3;
+    }
+    .face-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      cursor: pointer;
+    }
+    .del-x {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(20, 24, 30, 0.74);
+      color: #fff;
+      font-size: 11px;
+      line-height: 1;
+      padding: 0;
+      cursor: pointer;
+    }
+    .strike-tag {
+      position: absolute;
+      bottom: 2px;
+      left: 2px;
+      font-size: 9px;
+      background: rgba(0,0,0,0.68);
+      color: #fff;
+      padding: 1px 3px;
+      border-radius: 3px;
+      pointer-events: none;
+    }
+
+    /* Khung Đã lưu (DB) */
+    .saved-db-section {
+      margin-top: 16px;
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+      border-radius: 13px;
+      padding: 10px;
+    }
+    .saved-db-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--ok);
+    }
+    .saved-card {
+      background: #ffffff;
+      border: 1.5px solid #4ade80;
+      border-radius: 12px;
+      padding: 8px;
+      min-width: 0;
+    }
+    .lock-badge {
+      font-size: 10px;
+      background: var(--ok-soft);
+      color: var(--ok);
+      padding: 2px 5px;
+      border-radius: 5px;
+      font-weight: 700;
+    }
+
+    /* Modals */
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(12, 16, 22, 0.85);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+    }
+    .modal-box {
+      position: relative;
+      background: #fff;
+      color: var(--text);
+      border-radius: 14px;
+      padding: 13px;
+      max-width: 430px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .modal-close-x {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.92);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      z-index: 5;
+    }
+    .compare-row {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 8px;
+      align-items: center;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+    }
+    .compare-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 11.5px;
+      font-weight: 600;
+      text-align: center;
+    }
+    .compare-card img {
+      width: 92px;
+      height: 92px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .sim-badge {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 12px;
+      padding: 5px 8px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .modal-main-img {
+      width: 100%;
+      max-height: 54vh;
+      object-fit: contain;
+      border-radius: 9px;
+      background: #111;
+    }
+    .modal-info { font-size: 12px; color: var(--muted); line-height: 1.4; }
+    .modal-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="title-row">
+      <h1>Face Sorter v10 — iPad M1+</h1>
+      <div class="header-actions">
+        <span class="db-pill">Đã lưu: <b id="dbCount">0</b></span>
+        <button id="moreMenuBtn" class="btn btn-sm btn-ghost" title="Tùy chọn">⋯</button>
+        <div id="moreMenu" class="more-menu">
+          <button id="menuAddPersonBtn">+ Thêm người thủ công</button>
+          <button id="menuMergeGroupsBtn">Gộp hai nhóm</button>
+          <button id="menuRescanFailedBtn">Quét lại ảnh lỗi / 0 mặt</button>
+          <button id="menuResetSessionBtn">Làm lại phiên từ đầu</button>
+          <div class="menu-sep"></div>
+          <button id="menuExportDbBtn">Xuất DB (JSON)</button>
+          <button id="menuImportDbBtn">Nhập DB (JSON)</button>
+          <div class="menu-sep"></div>
+          <button id="menuClearDbBtn" class="danger-item">Xoá toàn bộ DB</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="upload-row">
+      <input type="file" id="fileInput" accept="image/*" multiple hidden />
+      <input type="file" id="importDbInput" accept="application/json" hidden />
+      <button id="addPhotosBtn" class="btn" disabled>Đang tải AI...</button>
+      <div id="originalsRoll" class="originals-roll" title="Ảnh gốc đã thêm (chạm để xem)">
+        <span style="font-size:11px;color:var(--muted);">Chưa có ảnh gốc</span>
+      </div>
+    </div>
+
+    <div class="meta-row">
+      <label>Khớp tối thiểu: <span id="simLabel">70%</span>
+        <input type="range" id="simThreshold" min="50" max="92" step="1" value="70" />
+      </label>
+      <button id="toggleAdvBtn" class="btn btn-sm btn-ghost" style="margin-left:auto;">Nâng cao ▾</button>
+    </div>
+
+    <div id="advBox" class="adv-box">
+      <label style="font-size:11.5px;font-weight:600;">Góc nghiêng tối đa: <span id="yawLabel">45°</span>
+        <input type="range" id="maxYaw" min="20" max="65" step="1" value="45" />
+      </label>
+      <label style="font-size:11.5px;font-weight:600;">
+        <input type="checkbox" id="tileScanToggle" checked /> Quét lát 2×2 (bắt mặt nhỏ)
+      </label>
+    </div>
+
+    <div id="statusRow" class="stats-row">
+      <span id="statusText">Đang tải mô hình nhận diện khuôn mặt...</span>
+      <button id="toggleAuditBtn" class="btn btn-sm btn-ghost" style="padding:2px 6px;font-size:10.5px;">Đối soát</button>
+    </div>
+
+    <div id="auditPanel" class="audit-panel">
+      <table class="audit-table">
+        <thead>
+          <tr>
+            <th>Ảnh</th>
+            <th>Dò</th>
+            <th>Giữ</th>
+            <th>Loại→Chưa chắc</th>
+            <th>Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Thanh Chưa chắc -->
+  <div class="unsure-strip">
+    <span class="unsure-badge" id="unsureBadge">0</span>
+    <div id="unsureGrid" class="unsure-scroll"></div>
+    <button id="retryUnsureBtn" class="btn btn-sm btn-ghost">Thử lại</button>
+  </div>
+
+  <!-- Lưới nhóm làm việc -->
+  <div id="peopleGrid" class="people-grid"></div>
+
+  <!-- Khung Đã lưu (DB) -->
+  <div class="saved-db-section">
+    <div class="saved-db-header">
+      <span>Đã lưu (<span id="savedPeopleCount">0</span>)</span>
+    </div>
+    <div id="savedPeopleGrid" class="people-grid"></div>
+  </div>
+
+  <!-- Modal xác nhận chuyển / gộp -->
+  <div id="confirmMoveModal" class="overlay" onclick="closeConfirmModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <button class="modal-close-x" onclick="closeConfirmModal()">✕</button>
+      <div id="cmpTitle" style="font-size:13.5px;font-weight:700;padding-right:24px;">Đề xuất chuyển</div>
+      <div class="compare-row">
+        <div class="compare-card">
+          <img id="cmpSrcImg" src="" alt="" />
+          <span id="cmpSrcLabel"></span>
+        </div>
+        <div class="sim-badge" id="cmpSimPct">0%</div>
+        <div class="compare-card">
+          <img id="cmpDstImg" src="" alt="" />
+          <span id="cmpDstLabel"></span>
+        </div>
+      </div>
+      <div id="cmpDesc" class="modal-info"></div>
+      <div class="modal-actions">
+        <button id="cmpNoBtn" class="btn btn-sm btn-danger">Giữ nguyên</button>
+        <button id="cmpYesBtn" class="btn btn-sm btn-ok">Chuyển</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal gộp hai nhóm (từ menu ⋯) -->
+  <div id="mergeModal" class="overlay" onclick="closeMergeModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <button class="modal-close-x" onclick="closeMergeModal()">✕</button>
+      <div style="font-size:13.5px;font-weight:700;">Gộp hai nhóm</div>
+      <div class="modal-info">Chọn nhóm nguồn và nhóm đích:</div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <select id="mergeSrcSel" style="flex:1;padding:6px;border-radius:7px;border:1px solid var(--border);"></select>
+        <span>→</span>
+        <select id="mergeDstSel" style="flex:1;padding:6px;border-radius:7px;border:1px solid var(--border);"></select>
+      </div>
+      <div class="modal-actions">
+        <button id="confirmMergeBtn" class="btn btn-sm btn-ok">Gộp nhóm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal xem chi tiết -->
+  <div id="detailModal" class="overlay" onclick="closeDetailModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <button class="modal-close-x" onclick="closeDetailModal()">✕</button>
+      <img id="detailImg" class="modal-main-img" src="" alt="" />
+      <div id="detailInfo" class="modal-info"></div>
+      <div id="detailActions" class="modal-actions">
+        <select id="moveTargetSelect"></select>
+        <button id="moveTargetBtn" class="btn btn-sm">Chuyển</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    const MP_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+    const MP_WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+    const DB_NAME = "FaceSorterProtectedDB_v10";
+    const STORE_NAME = "saved_people";
+
+    const fileInput = document.getElementById("fileInput");
+    const importDbInput = document.getElementById("importDbInput");
+    const addPhotosBtn = document.getElementById("addPhotosBtn");
+    const originalsRoll = document.getElementById("originalsRoll");
+    const statusRow = document.getElementById("statusRow");
+    const statusText = document.getElementById("statusText");
+    const simThresholdEl = document.getElementById("simThreshold");
+    const simLabel = document.getElementById("simLabel");
+    const maxYawEl = document.getElementById("maxYaw");
+    const yawLabel = document.getElementById("yawLabel");
+    const tileScanToggle = document.getElementById("tileScanToggle");
+    const toggleAdvBtn = document.getElementById("toggleAdvBtn");
+    const advBox = document.getElementById("advBox");
+    const toggleAuditBtn = document.getElementById("toggleAuditBtn");
+    const auditPanel = document.getElementById("auditPanel");
+    const auditBody = document.getElementById("auditBody");
+
+    const moreMenuBtn = document.getElementById("moreMenuBtn");
+    const moreMenu = document.getElementById("moreMenu");
+    const menuAddPersonBtn = document.getElementById("menuAddPersonBtn");
+    const menuMergeGroupsBtn = document.getElementById("menuMergeGroupsBtn");
+    const menuRescanFailedBtn = document.getElementById("menuRescanFailedBtn");
+    const menuResetSessionBtn = document.getElementById("menuResetSessionBtn");
+    const menuExportDbBtn = document.getElementById("menuExportDbBtn");
+    const menuImportDbBtn = document.getElementById("menuImportDbBtn");
+    const menuClearDbBtn = document.getElementById("menuClearDbBtn");
+
+    const peopleGrid = document.getElementById("peopleGrid");
+    const savedPeopleGrid = document.getElementById("savedPeopleGrid");
+    const savedPeopleCountEl = document.getElementById("savedPeopleCount");
+    const unsureGrid = document.getElementById("unsureGrid");
+    const unsureBadge = document.getElementById("unsureBadge");
+    const retryUnsureBtn = document.getElementById("retryUnsureBtn");
+    const dbCountEl = document.getElementById("dbCount");
+
+    const confirmMoveModal = document.getElementById("confirmMoveModal");
+    const cmpTitle = document.getElementById("cmpTitle");
+    const cmpSrcImg = document.getElementById("cmpSrcImg");
+    const cmpSrcLabel = document.getElementById("cmpSrcLabel");
+    const cmpDstImg = document.getElementById("cmpDstImg");
+    const cmpDstLabel = document.getElementById("cmpDstLabel");
+    const cmpSimPct = document.getElementById("cmpSimPct");
+    const cmpDesc = document.getElementById("cmpDesc");
+    const cmpYesBtn = document.getElementById("cmpYesBtn");
+    const cmpNoBtn = document.getElementById("cmpNoBtn");
+
+    const mergeModal = document.getElementById("mergeModal");
+    const mergeSrcSel = document.getElementById("mergeSrcSel");
+    const mergeDstSel = document.getElementById("mergeDstSel");
+    const confirmMergeBtn = document.getElementById("confirmMergeBtn");
+
+    const detailModal = document.getElementById("detailModal");
+    const detailImg = document.getElementById("detailImg");
+    const detailInfo = document.getElementById("detailInfo");
+    const detailActions = document.getElementById("detailActions");
+    const moveTargetSelect = document.getElementById("moveTargetSelect");
+    const moveTargetBtn = document.getElementById("moveTargetBtn");
+
+    let human = null;
+    let faceLandmarker = null;
+    let mpReady = false;
+
+    // Trạng thái file & bảng đối soát
+    let fileRecords = []; // [{ key, file, name, thumbUrl, fullUrl, detectedCount, keptCount, unsureCount, status }]
+    let processedFileKeys = new Set();
+
+    // Dữ liệu khuôn mặt trong phiên
+    // Mỗi face có cờ: manualGroupId (nếu người dùng đã gán/chuyển/gộp thủ công -> không bị mất khi kéo slider!)
+    let allFaces = [];
+    let people = []; // [{ id, name, centroid, embs, faces, isManual }]
+    let unsureFaces = [];
+    let savedDBPeople = [];
+    let dbMatchProposals = [];
+    let pendingModalAction = null;
+    let detailCtx = null;
+    let idSeq = 0;
+    let sliderTimer = null;
+
+    function escHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function setStatus(msg, isErr = false) {
+      statusText.textContent = msg;
+      statusRow.className = isErr ? "stats-row err" : "stats-row";
+    }
+
+    // --- IndexedDB với xử lý đầy đủ onerror / onabort ---
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME, { keyPath: "id" });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error("Lỗi mở IndexedDB"));
+        req.onblocked = () => reject(new Error("IndexedDB đang bị khóa"));
+      });
+    }
+
+    async function loadSavedDB() {
+      try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const rows = await new Promise((res, rej) => {
+          const r = tx.objectStore(STORE_NAME).getAll();
+          r.onsuccess = () => res(r.result || []);
+          r.onerror = () => rej(r.error || new Error("Lỗi đọc DB"));
+          tx.onerror = () => rej(tx.error || new Error("Lỗi giao dịch đọc DB"));
+          tx.onabort = () => rej(tx.error || new Error("Giao dịch đọc DB bị hủy"));
+        });
+        savedDBPeople = rows.map(r => ({
+          id: r.id,
+          name: r.name,
+          centroid: l2Normalize(Float32Array.from(r.centroid)),
+          embs: (r.embs || []).map(e => l2Normalize(Float32Array.from(e))),
+          faces: (r.faces || []).map(f => ({
+            id: f.id,
+            url: f.url,
+            fileName: f.fileName || r.name
+          }))
+        }));
+        dbCountEl.textContent = savedDBPeople.length;
+        savedPeopleCountEl.textContent = savedDBPeople.length;
+        renderSavedDBSection();
+      } catch (err) {
+        setStatus("Lỗi tải DB: " + err.message, true);
+      }
+    }
+
+    // Không cắt 24/30 mặt: lưu toàn bộ embedding và toàn bộ ảnh đã confirm
+    async function persistSavedPerson(personObj) {
+      const validEmbs = (personObj.embs || []).map(e => Array.from(e));
+      if (!validEmbs.length) return;
+      const centroidArr = Array.from(calcNormalizedCentroid(validEmbs.map(e => Float32Array.from(e))));
+      const savedFaces = (personObj.faces || []).map(f => ({
+        id: f.id,
+        url: f.url,
+        fileName: f.fileName || ""
+      }));
+
+      const db = await openDB();
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      tx.objectStore(STORE_NAME).put({
+        id: personObj.id,
+        name: personObj.name.trim(),
+        centroid: centroidArr,
+        embs: validEmbs,
+        faces: savedFaces,
+        updatedAt: Date.now()
+      });
+      await new Promise((res, rej) => {
+        tx.oncomplete = () => res();
+        tx.onerror = () => rej(tx.error || new Error("Lỗi lưu DB (có thể đầy bộ nhớ)"));
+        tx.onabort = () => rej(tx.error || new Error("Lưu DB bị hủy (hết dung lượng)"));
+      });
+      await loadSavedDB();
+    }
+
+    async function initModels() {
+      await loadSavedDB();
+      try {
+        let wait = 0;
+        while (!window.Human && wait < 120) {
+          await new Promise(r => setTimeout(r, 100));
+          wait++;
+        }
+        if (!window.Human) throw new Error("Không tải được thư viện Human.");
+
+        human = new window.Human.Human({
+          backend: "webgl",
+          modelBasePath: "https://cdn.jsdelivr.net/npm/@vladmandic/human@3.3.5/models/",
+          cacheSensitivity: 0,
+          face: {
+            enabled: true,
+            detector: { enabled: true, maxDetected: 50, minConfidence: 0.30, iouThreshold: 0.35, rotation: true },
+            mesh: { enabled: true },
+            iris: { enabled: false },
+            description: { enabled: true },
+            emotion: { enabled: false },
+            antispoof: { enabled: false },
+            liveness: { enabled: false }
+          },
+          body: { enabled: false },
+          hand: { enabled: false },
+          object: { enabled: false },
+          gesture: { enabled: false }
+        });
+        await human.load();
+
+        try {
+          if (window.__MP_VISION__) {
+            const { FilesetResolver, FaceLandmarker } = window.__MP_VISION__;
+            const vision = await FilesetResolver.forVisionTasks(MP_WASM_URL);
+            faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+              baseOptions: { modelAssetPath: MP_MODEL_URL, delegate: "GPU" },
+              runningMode: "IMAGE",
+              numFaces: 50,
+              outputFacialTransformationMatrixes: true
+            });
+            mpReady = true;
+          }
+        } catch (mpErr) {
+          console.warn("MediaPipe fallback to Human rotation:", mpErr);
+          mpReady = false;
+        }
+
+        addPhotosBtn.disabled = false;
+        addPhotosBtn.textContent = "Thêm ảnh";
+        updateSummaryStatus();
+      } catch (err) {
+        setStatus("Lỗi khởi tạo AI: " + err.message, true);
+      }
+    }
+
+    initModels();
+
+    // --- Menu ⋯ & UI toggles ---
+    moreMenuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      moreMenu.classList.toggle("open");
+    });
+    document.addEventListener("click", () => moreMenu.classList.remove("open"));
+
+    toggleAdvBtn.addEventListener("click", () => {
+      advBox.classList.toggle("open");
+      toggleAdvBtn.textContent = advBox.classList.contains("open") ? "Nâng cao ▴" : "Nâng cao ▾";
+    });
+
+    toggleAuditBtn.addEventListener("click", () => {
+      auditPanel.classList.toggle("open");
+    });
+
+    // Luôn nối thêm ảnh khi bấm "Thêm ảnh"
+    addPhotosBtn.addEventListener("click", () => {
+      fileInput.value = "";
+      fileInput.click();
+    });
+
+    fileInput.addEventListener("change", async () => {
+      const files = Array.from(fileInput.files || []);
+      if (!files.length) return;
+      await processFilesIncremental(files);
+    });
+
+    // Thêm người thủ công (từ menu ⋯)
+    menuAddPersonBtn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      const name = prompt("Nhập tên người mới:");
+      if (!name || !name.trim()) return;
+      const clean = name.trim();
+      people.push({
+        id: `p_manual_${Date.now()}`,
+        name: clean,
+        centroid: null,
+        embs: [],
+        faces: [],
+        isManual: true
+      });
+      renderWorkingUI();
+      updateSummaryStatus();
+    });
+
+    // Gộp hai nhóm (từ menu ⋯)
+    menuMergeGroupsBtn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      if (people.length < 2) {
+        setStatus("Cần ít nhất 2 nhóm để gộp.");
+        return;
+      }
+      const opts = people.map((p, idx) => `<option value="${idx}">${escHtml(p.name)} (${p.faces.length})</option>`).join("");
+      mergeSrcSel.innerHTML = opts;
+      mergeDstSel.innerHTML = opts;
+      if (people.length > 1) mergeDstSel.selectedIndex = 1;
+      mergeModal.style.display = "flex";
+    });
+
+    window.closeMergeModal = function() {
+      mergeModal.style.display = "none";
+    };
+
+    confirmMergeBtn.addEventListener("click", () => {
+      const fromIdx = parseInt(mergeSrcSel.value, 10);
+      const toIdx = parseInt(mergeDstSel.value, 10);
+      if (Number.isNaN(fromIdx) || Number.isNaN(toIdx) || fromIdx === toIdx) return;
+      mergeWorkingPerson(fromIdx, toIdx);
+      closeMergeModal();
+    });
+
+    // Quét lại ảnh lỗi / 0 mặt (từ menu ⋯)
+    menuRescanFailedBtn.addEventListener("click", async () => {
+      moreMenu.classList.remove("open");
+      const retryTargets = fileRecords.filter(r => r.status === "Lỗi" || r.keptCount === 0);
+      if (!retryTargets.length) {
+        setStatus("Không có ảnh lỗi hoặc ảnh 0 mặt cần quét lại.");
+        return;
+      }
+      retryTargets.forEach(r => processedFileKeys.delete(r.key));
+      const files = retryTargets.map(r => r.file);
+      await processFilesIncremental(files, true);
+    });
+
+    // Làm lại phiên từ đầu (không đụng DB)
+    menuResetSessionBtn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      if (!confirm("Làm lại phiên hiện tại? (Dữ liệu Đã lưu vẫn được giữ nguyên)")) return;
+      fileRecords = [];
+      processedFileKeys.clear();
+      allFaces = [];
+      people = [];
+      unsureFaces = [];
+      renderOriginalsRoll();
+      renderAuditTable();
+      renderWorkingUI();
+      updateSummaryStatus();
+    });
+
+    // Xuất / Nhập / Xoá DB
+    menuExportDbBtn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      const dataStr = JSON.stringify(savedDBPeople.map(p => ({
+        id: p.id,
+        name: p.name,
+        centroid: Array.from(p.centroid),
+        embs: p.embs.map(e => Array.from(e)),
+        faces: p.faces
+      })));
+      const blob = new Blob([dataStr], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `face-sorter-db-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+    });
+
+    menuImportDbBtn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      importDbInput.value = "";
+      importDbInput.click();
+    });
+
+    importDbInput.addEventListener("change", async () => {
+      const f = importDbInput.files?.[0];
+      if (!f) return;
+      try {
+        const text = await f.text();
+        const arr = JSON.parse(text);
+        if (!Array.isArray(arr)) throw new Error("Định dạng JSON không hợp lệ");
+        for (const item of arr) {
+          if (!item.name || !Array.isArray(item.embs) || !item.embs.length) continue;
+          const personObj = {
+            id: item.id || `db_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+            name: String(item.name).trim(),
+            embs: item.embs.map(e => l2Normalize(Float32Array.from(e))),
+            faces: Array.isArray(item.faces) ? item.faces : []
+          };
+          await persistSavedPerson(personObj);
+        }
+        updateSummaryStatus();
+        setStatus(`Đã nhập ${arr.length} người vào DB.`);
+      } catch (err) {
+        setStatus("Lỗi nhập DB: " + err.message, true);
+      }
+    });
+
+    menuClearDbBtn.addEventListener("click", async () => {
+      moreMenu.classList.remove("open");
+      if (!confirm("Xoá vĩnh viễn toàn bộ người đã lưu trong Database?")) return;
+      try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        tx.objectStore(STORE_NAME).clear();
+        await new Promise((res, rej) => {
+          tx.oncomplete = () => res();
+          tx.onerror = () => rej(tx.error);
+          tx.onabort = () => rej(tx.error);
+        });
+        savedDBPeople = [];
+        dbCountEl.textContent = "0";
+        savedPeopleCountEl.textContent = "0";
+        // Mở lại cờ các mặt thuộc phiên hiện tại nếu từng được lưu vào DB
+        allFaces.forEach(f => { f.mergedToSavedDB = false; });
+        renderSavedDBSection();
+        reclusterPreservingManual();
+      } catch (err) {
+        setStatus("Lỗi xoá DB: " + err.message, true);
+      }
+    });
+
+    // Debounce slider & bảo toàn chỉnh tay khi thay đổi ngưỡng
+    function scheduleRecluster() {
+      clearTimeout(sliderTimer);
+      sliderTimer = setTimeout(() => {
+        if (allFaces.length > 0) reclusterPreservingManual();
+      }, 160);
+    }
+
+    simThresholdEl.addEventListener("input", () => {
+      simLabel.textContent = `${simThresholdEl.value}%`;
+      scheduleRecluster();
+    });
+
+    maxYawEl.addEventListener("input", () => {
+      yawLabel.textContent = `${maxYawEl.value}°`;
+      scheduleRecluster();
+    });
+
+    function l2Normalize(vec) {
+      let norm = 0;
+      for (let i = 0; i < vec.length; i++) norm += vec[i] * vec[i];
+      norm = Math.sqrt(norm) || 1;
+      const out = new Float32Array(vec.length);
+      for (let i = 0; i < vec.length; i++) out[i] = vec[i] / norm;
+      return out;
+    }
+
+    function cosineSimilarity(a, b) {
+      if (!a || !b || a.length !== b.length) return -1;
+      let dot = 0;
+      for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+      return Math.max(-1, Math.min(1, dot));
+    }
+
+    function similarityToPerson(emb, person) {
+      if (!emb || !person || !person.centroid) return 0;
+      const simCentroid = cosineSimilarity(emb, person.centroid);
+      let maxSampleSim = simCentroid;
+      for (const s of (person.embs || [])) {
+        const sim = cosineSimilarity(emb, s);
+        if (sim > maxSampleSim) maxSampleSim = sim;
+      }
+      return 0.65 * maxSampleSim + 0.35 * simCentroid;
+    }
+
+    function calcNormalizedCentroid(vectors) {
+      const len = vectors[0].length;
+      const sum = new Float32Array(len);
+      for (const v of vectors) {
+        for (let i = 0; i < len; i++) sum[i] += v[i];
+      }
+      let norm = 0;
+      for (let i = 0; i < len; i++) {
+        sum[i] /= vectors.length;
+        norm += sum[i] * sum[i];
+      }
+      norm = Math.sqrt(norm) || 1;
+      for (let i = 0; i < len; i++) sum[i] /= norm;
+      return sum;
+    }
+
+    function estimateYawDegFromMatrix(matrixData) {
+      if (!matrixData || matrixData.length < 16) return null;
+      return Math.abs((Math.atan2(matrixData[8], matrixData[10]) * 180) / Math.PI);
+    }
+
+    function fileToCanvas(file, maxDim = 1800) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            if (width >= height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const c = document.createElement("canvas");
+          c.width = width;
+          c.height = height;
+          c.getContext("2d").drawImage(img, 0, 0, width, height);
+          URL.revokeObjectURL(url);
+          resolve(c);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("Lỗi đọc ảnh"));
+        };
+        img.src = url;
+      });
+    }
+
+    function makeThumbUrl(canvas, size = 84) {
+      const t = document.createElement("canvas");
+      t.width = size;
+      t.height = size;
+      t.getContext("2d").drawImage(canvas, 0, 0, size, size);
+      const u = t.toDataURL("image/jpeg", 0.78);
+      t.width = 0; t.height = 0;
+      return u;
+    }
+
+    function boxIoU(a, b) {
+      const x1 = Math.max(a.x, b.x);
+      const y1 = Math.max(a.y, b.y);
+      const x2 = Math.min(a.x + a.width, b.x + b.width);
+      const y2 = Math.min(a.y + a.height, b.y + b.height);
+      const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+      if (inter <= 0) return 0;
+      const areaA = a.width * a.height;
+      const areaB = b.width * b.height;
+      return inter / Math.max(1, areaA + areaB - inter);
+    }
+
+    // Quét toàn ảnh + quét lát 2x2 có chồng lấn để bắt mặt nhỏ, sau đó NMS khử trùng
+    async function detectMultiScaleTiles(canvas) {
+      const allDetections = [];
+
+      // 1. Quét toàn ảnh
+      const fullRes = await human.detect(canvas);
+      for (const f of (fullRes.face || [])) {
+        if (!f.box) continue;
+        allDetections.push({
+          box: { x: f.box[0], y: f.box[1], width: f.box[2], height: f.box[3] },
+          embedding: f.embedding && f.embedding.length ? l2Normalize(f.embedding) : null,
+          score: f.faceScore || f.boxScore || 0.4,
+          humanYaw: f.rotation?.angle?.yaw != null ? Math.abs((f.rotation.angle.yaw * 180) / Math.PI) : null
+        });
+      }
+
+      // 2. Quét lát 2x2 có chồng lấn 20%
+      if (tileScanToggle.checked && (canvas.width >= 600 || canvas.height >= 600)) {
+        const overlap = 0.20;
+        const tileW = Math.round(canvas.width * (0.5 + overlap / 2));
+        const tileH = Math.round(canvas.height * (0.5 + overlap / 2));
+        const offsets = [
+          { ox: 0, oy: 0 },
+          { ox: canvas.width - tileW, oy: 0 },
+          { ox: 0, oy: canvas.height - tileH },
+          { ox: canvas.width - tileW, oy: canvas.height - tileH }
+        ];
+
+        const tCanvas = document.createElement("canvas");
+        tCanvas.width = tileW;
+        tCanvas.height = tileH;
+        const tCtx = tCanvas.getContext("2d");
+
+        for (const { ox, oy } of offsets) {
+          tCtx.clearRect(0, 0, tileW, tileH);
+          tCtx.drawImage(canvas, ox, oy, tileW, tileH, 0, 0, tileW, tileH);
+          const tRes = await human.detect(tCanvas);
+          for (const f of (tRes.face || [])) {
+            if (!f.box) continue;
+            allDetections.push({
+              box: { x: f.box[0] + ox, y: f.box[1] + oy, width: f.box[2], height: f.box[3] },
+              embedding: f.embedding && f.embedding.length ? l2Normalize(f.embedding) : null,
+              score: f.faceScore || f.boxScore || 0.4,
+              humanYaw: f.rotation?.angle?.yaw != null ? Math.abs((f.rotation.angle.yaw * 180) / Math.PI) : null
+            });
+          }
+        }
+        tCanvas.width = 0; tCanvas.height = 0;
+      }
+
+      // 3. NMS khử trùng lặp giữa toàn ảnh và các lát
+      allDetections.sort((a, b) => b.score - a.score);
+      const kept = [];
+      for (const det of allDetections) {
+        const isDup = kept.some(k => boxIoU(k.box, det.box) > 0.42);
+        if (!isDup) kept.push(det);
+      }
+      return kept;
+    }
+
+    // Crop vuông không méo hình, không ép nhỏ quá tay
+    function cropSquareSafe(sourceCanvas, box, outSize = 240) {
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+      const side = Math.max(box.width, box.height) * 1.24;
+      const half = side / 2;
+
+      const x1 = Math.max(0, Math.round(cx - half));
+      const y1 = Math.max(0, Math.round(cy - half));
+      const x2 = Math.min(sourceCanvas.width, Math.round(cx + half));
+      const y2 = Math.min(sourceCanvas.height, Math.round(cy + half));
+      const w = Math.max(1, x2 - x1);
+      const h = Math.max(1, y2 - y1);
+
+      const out = document.createElement("canvas");
+      out.width = outSize;
+      out.height = outSize;
+      const ctx = out.getContext("2d");
+      ctx.fillStyle = "#18202c";
+      ctx.fillRect(0, 0, outSize, outSize);
+
+      // Giữ nguyên tỷ lệ gốc (letterbox nhẹ nếu chạm rìa ảnh) để không kéo giãn méo mặt
+      const scale = Math.min(outSize / w, outSize / h);
+      const dw = Math.round(w * scale);
+      const dh = Math.round(h * scale);
+      const dx = Math.floor((outSize - dw) / 2);
+      const dy = Math.floor((outSize - dh) / 2);
+      ctx.drawImage(sourceCanvas, x1, y1, w, h, dx, dy, dw, dh);
+
+      const dataUrl = out.toDataURL("image/jpeg", 0.92);
+      out.width = 0; out.height = 0;
+      return dataUrl;
+    }
+
+    function renderOriginalsRoll() {
+      if (!fileRecords.length) {
+        originalsRoll.innerHTML = `<span style="font-size:11px;color:var(--muted);">Chưa có ảnh gốc</span>`;
+        return;
+      }
+      originalsRoll.innerHTML = "";
+      fileRecords.forEach((item, idx) => {
+        const div = document.createElement("div");
+        div.className = "orig-thumb" + (item.keptCount === 0 ? " zero-face" : "");
+        div.title = `${item.name} (${item.keptCount} mặt)`;
+        div.innerHTML = `<img src="${item.thumbUrl}" /><span class="orig-idx">${idx + 1}</span>`;
+        div.onclick = () => {
+          detailImg.src = item.fullUrl;
+          detailInfo.textContent = `Ảnh #${idx + 1}: ${item.name} • Dò: ${item.detectedCount} • Giữ: ${item.keptCount} • Chưa chắc: ${item.unsureCount}`;
+          detailActions.style.display = "none";
+          detailModal.style.display = "flex";
+        };
+        originalsRoll.appendChild(div);
+      });
+    }
+
+    function renderAuditTable() {
+      auditBody.innerHTML = "";
+      fileRecords.forEach((r, idx) => {
+        const tr = document.createElement("tr");
+        const stHtml = r.status === "Lỗi"
+          ? `<span class="badge-zero">Lỗi</span>`
+          : r.keptCount === 0
+            ? `<span class="badge-zero">0 mặt</span>`
+            : `<span class="badge-ok">OK</span>`;
+        tr.innerHTML = `
+          <td>#${idx + 1} ${escHtml(r.name)}</td>
+          <td>${r.detectedCount}</td>
+          <td>${r.keptCount}</td>
+          <td>${r.unsureCount}</td>
+          <td>${stHtml}</td>
+        `;
+        auditBody.appendChild(tr);
+      });
+    }
+
+    // Quét tăng dần: chỉ đánh dấu đã xử lý SAU KHI quét thành công, luôn có finally mở khóa nút
+    async function processFilesIncremental(files, isRetry = false) {
+      addPhotosBtn.disabled = true;
+
+      try {
+        const queue = files.filter(f => {
+          const key = `${f.name}_${f.size}_${f.lastModified}`;
+          return !processedFileKeys.has(key);
+        });
+
+        if (!queue.length) {
+          setStatus("Tất cả ảnh đã được quét trước đó.");
+          return;
+        }
+
+        const newlyExtractedFaces = [];
+
+        for (let i = 0; i < queue.length; i++) {
+          const file = queue[i];
+          const fileKey = `${file.name}_${file.size}_${file.lastModified}`;
+          setStatus(`Đang quét ảnh ${i + 1}/${queue.length}...`);
+          await new Promise(r => setTimeout(r, 10));
+
+          let rec = fileRecords.find(r => r.key === fileKey);
+          if (!rec) {
+            rec = {
+              key: fileKey,
+              file,
+              name: file.name,
+              thumbUrl: "",
+              fullUrl: "",
+              detectedCount: 0,
+              keptCount: 0,
+              unsureCount: 0,
+              status: "Đang quét"
+            };
+            fileRecords.push(rec);
+          } else {
+            rec.detectedCount = 0;
+            rec.keptCount = 0;
+            rec.unsureCount = 0;
+          }
+
+          try {
+            const canvas = await fileToCanvas(file, 1800);
+            const baseName = file.name.replace(/\.[^.]+$/, "");
+            rec.thumbUrl = makeThumbUrl(canvas, 84);
+            rec.fullUrl = canvas.toDataURL("image/jpeg", 0.85);
+
+            // MediaPipe phụ trợ góc nghiêng
+            const mpFaces = [];
+            if (mpReady && faceLandmarker) {
+              try {
+                const mpRes = faceLandmarker.detect(canvas);
+                if (mpRes && mpRes.faceLandmarks) {
+                  mpRes.faceLandmarks.forEach((lms, k) => {
+                    let minX = 1, minY = 1, maxX = 0, maxY = 0;
+                    for (const pt of lms) {
+                      if (pt.x < minX) minX = pt.x;
+                      if (pt.y < minY) minY = pt.y;
+                      if (pt.x > maxX) maxX = pt.x;
+                      if (pt.y > maxY) maxY = pt.y;
+                    }
+                    const yaw = mpRes.facialTransformationMatrixes?.[k]
+                      ? estimateYawDegFromMatrix(mpRes.facialTransformationMatrixes[k].data)
+                      : null;
+                    mpFaces.push({
+                      cx: ((minX + maxX) / 2) * canvas.width,
+                      cy: ((minY + maxY) / 2) * canvas.height,
+                      radius: Math.max(maxX - minX, maxY - minY) * canvas.width,
+                      yaw
+                    });
+                  });
+                }
+              } catch (_) {}
+            }
+
+            const detections = await detectMultiScaleTiles(canvas);
+            rec.detectedCount = detections.length;
+
+            detections.forEach((det, idx) => {
+              const { box, embedding, score, humanYaw } = det;
+              const cx = box.x + box.width / 2;
+              const cy = box.y + box.height / 2;
+
+              // Ước lượng góc nghiêng: ưu tiên MediaPipe, dự phòng Human rotation
+              let yaw = humanYaw ?? 0;
+              for (const m of mpFaces) {
+                if (m.yaw != null && Math.hypot(m.cx - cx, m.cy - cy) < Math.max(box.width, m.radius) * 0.7) {
+                  yaw = m.yaw;
+                  break;
+                }
+              }
+
+              // KHÔNG BAO GIỜ BỎ MẶT ÂM THẦM: kiểm tra chất lượng & gắn lý do vào Chưa chắc nếu bất thường
+              const aspect = box.width / Math.max(1, box.height);
+              let forcedUnsureReason = "";
+              if (!embedding) {
+                forcedUnsureReason = "Thiếu đặc trưng";
+              } else if (box.width < 22 || box.height < 22) {
+                forcedUnsureReason = `Quá nhỏ (${Math.round(box.width)}px)`;
+              } else if (aspect < 0.42 || aspect > 2.3) {
+                forcedUnsureReason = `Tỉ lệ lạ (${aspect.toFixed(2)})`;
+              }
+
+              const url = cropSquareSafe(canvas, box, 240);
+              idSeq++;
+              const faceObj = {
+                id: `f_${idSeq}`,
+                url,
+                fileName: `${baseName}_m${idx + 1}.jpg`,
+                embedding,
+                score,
+                yaw,
+                strikes: 0,
+                excludedIds: new Set(),
+                forcedUnsureReason,
+                reason: forcedUnsureReason,
+                manualGroupId: null,
+                mergedToSavedDB: false
+              };
+
+              allFaces.push(faceObj);
+              newlyExtractedFaces.push(faceObj);
+
+              if (forcedUnsureReason || yaw > parseFloat(maxYawEl.value)) {
+                rec.unsureCount++;
+              } else {
+                rec.keptCount++;
+              }
+            });
+
+            rec.status = "OK";
+            processedFileKeys.add(fileKey); // Chỉ đánh dấu sau khi quét hoàn tất!
+            canvas.width = 0; canvas.height = 0;
+          } catch (err) {
+            rec.status = "Lỗi";
+            console.warn("Lỗi quét ảnh:", file.name, err);
+          }
+
+          renderOriginalsRoll();
+          renderAuditTable();
+        }
+
+        assignIncrementalFaces(newlyExtractedFaces);
+        updateSummaryStatus();
+        queueDatabaseMatchProposals();
+      } finally {
+        addPhotosBtn.disabled = false;
+      }
+    }
+
+    // Tránh trùng tên mặc định N1, N2... với tên đã có trong DB
+    function getNextAutoGroupName(usedNamesSet) {
+      let n = 1;
+      while (true) {
+        const candidate = `N${n}`;
+        if (!usedNamesSet.has(candidate.toLowerCase())) {
+          usedNamesSet.add(candidate.toLowerCase());
+          return candidate;
+        }
+        n++;
+      }
+    }
+
+    function assignIncrementalFaces(newFaces) {
+      const simTh = parseFloat(simThresholdEl.value) / 100;
+      const maxYaw = parseFloat(maxYawEl.value);
+      const usedNames = new Set([
+        ...people.map(p => p.name.toLowerCase()),
+        ...savedDBPeople.map(d => d.name.toLowerCase())
+      ]);
+
+      for (const f of newFaces) {
+        if (f.forcedUnsureReason) {
+          f.reason = f.forcedUnsureReason;
+          unsureFaces.push(f);
+          continue;
+        }
+        if (f.yaw > maxYaw) {
+          f.reason = `Nghiêng ~${Math.round(f.yaw)}°`;
+          unsureFaces.push(f);
+          continue;
+        }
+
+        let bestIdx = -1;
+        let bestSim = simTh;
+        for (let i = 0; i < people.length; i++) {
+          if (!people[i].centroid) continue;
+          const s = similarityToPerson(f.embedding, people[i]);
+          if (s >= simTh && s > bestSim) {
+            bestSim = s;
+            bestIdx = i;
+          }
+        }
+
+        if (bestIdx >= 0) {
+          people[bestIdx].faces.push(f);
+          people[bestIdx].embs.push(f.embedding);
+          people[bestIdx].centroid = calcNormalizedCentroid(people[bestIdx].embs);
+        } else {
+          people.push({
+            id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+            name: getNextAutoGroupName(usedNames),
+            centroid: f.embedding,
+            embs: [f.embedding],
+            faces: [f],
+            isManual: false
+          });
+        }
+      }
+
+      renderWorkingUI();
+    }
+
+    // Bảo toàn toàn bộ chỉnh tay (tên nhóm, nhóm tạo tay, mặt đã chuyển/gộp thủ công) khi đổi slider
+    function reclusterPreservingManual() {
+      const simTh = parseFloat(simThresholdEl.value) / 100;
+      const maxYaw = parseFloat(maxYawEl.value);
+
+      // 1. Giữ lại các nhóm được đặt tên riêng hoặc tạo thủ công hoặc có mặt gán thủ công
+      const preservedGroups = [];
+      for (const p of people) {
+        const manualFaces = p.faces.filter(f => f.manualGroupId === p.id && !f.mergedToSavedDB);
+        const isNamedCustom = !/^N\d+$/.test(p.name) || p.isManual;
+        if (manualFaces.length > 0 || isNamedCustom) {
+          const embs = manualFaces.filter(x => x.embedding).map(x => x.embedding);
+          preservedGroups.push({
+            id: p.id,
+            name: p.name,
+            faces: manualFaces,
+            embs,
+            centroid: embs.length ? calcNormalizedCentroid(embs) : null,
+            isManual: p.isManual
+          });
+        }
+      }
+
+      people = preservedGroups;
+      unsureFaces = [];
+
+      const usedNames = new Set([
+        ...people.map(p => p.name.toLowerCase()),
+        ...savedDBPeople.map(d => d.name.toLowerCase())
+      ]);
+
+      // 2. Chỉ gom lại các mặt chưa lưu DB và chưa được gán thủ công
+      const autoCandidates = [];
+      for (const f of allFaces) {
+        if (f.mergedToSavedDB) continue;
+        if (f.manualGroupId && people.some(p => p.id === f.manualGroupId)) continue;
+        f.manualGroupId = null;
+
+        if (f.strikes >= 3) {
+          f.reason = "Đã xoá 3 lần";
+          unsureFaces.push(f);
+          continue;
+        }
+        if (f.forcedUnsureReason) {
+          f.reason = f.forcedUnsureReason;
+          unsureFaces.push(f);
+          continue;
+        }
+        if (f.yaw > maxYaw) {
+          f.reason = `Nghiêng ~${Math.round(f.yaw)}°`;
+          unsureFaces.push(f);
+          continue;
+        }
+        autoCandidates.push(f);
+      }
+
+      autoCandidates.sort((a, b) => b.score - a.score);
+
+      for (const f of autoCandidates) {
+        let bestIdx = -1;
+        let bestSim = simTh;
+        for (let i = 0; i < people.length; i++) {
+          if (f.excludedIds.has(people[i].id) || !people[i].centroid) continue;
+          const s = similarityToPerson(f.embedding, people[i]);
+          if (s >= simTh && s > bestSim) {
+            bestSim = s;
+            bestIdx = i;
+          }
+        }
+
+        if (bestIdx >= 0) {
+          people[bestIdx].faces.push(f);
+          people[bestIdx].embs.push(f.embedding);
+          people[bestIdx].centroid = calcNormalizedCentroid(people[bestIdx].embs);
+        } else {
+          people.push({
+            id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            name: getNextAutoGroupName(usedNames),
+            centroid: f.embedding,
+            embs: [f.embedding],
+            faces: [f],
+            isManual: false
+          });
+        }
+      }
+
+      people.sort((a, b) => b.faces.length - a.faces.length);
+      renderWorkingUI();
+      updateSummaryStatus();
+    }
+
+    function queueDatabaseMatchProposals() {
+      if (!savedDBPeople.length) return;
+      const dbMatchTh = Math.max(0.68, (parseFloat(simThresholdEl.value) / 100) - 0.03);
+      dbMatchProposals = [];
+
+      for (const p of people) {
+        if (!p.centroid || !p.faces.length) continue;
+        let bestDb = null;
+        let bestSim = dbMatchTh;
+        for (const dbP of savedDBPeople) {
+          const s = similarityToPerson(p.centroid, dbP);
+          if (s >= dbMatchTh && s > bestSim) {
+            bestSim = s;
+            bestDb = dbP;
+          }
+        }
+        if (bestDb) {
+          dbMatchProposals.push({
+            workingPersonId: p.id,
+            dbPersonId: bestDb.id,
+            sim: bestSim
+          });
+        }
+      }
+
+      if (dbMatchProposals.length > 0) showNextDbProposal();
+    }
+
+    function showNextDbProposal() {
+      if (!dbMatchProposals.length) return;
+      const prop = dbMatchProposals.shift();
+      const wP = people.find(p => p.id === prop.workingPersonId);
+      const dbP = savedDBPeople.find(p => p.id === prop.dbPersonId);
+      if (!wP || !dbP || !wP.faces.length) {
+        showNextDbProposal();
+        return;
+      }
+
+      const pct = Math.round(prop.sim * 100);
+      pendingModalAction = {
+        mode: "merge_to_db",
+        workingPersonId: wP.id,
+        dbPersonId: dbP.id
+      };
+
+      cmpTitle.textContent = "Trùng người đã lưu?";
+      cmpSrcImg.src = wP.faces[0]?.url || "";
+      cmpSrcLabel.textContent = `${wP.name} (${wP.faces.length})`;
+      cmpDstImg.src = dbP.faces[0]?.url || "";
+      cmpDstLabel.textContent = `${dbP.name} (${dbP.faces.length})`;
+      cmpSimPct.textContent = `${pct}%`;
+      cmpDesc.textContent = `${wP.name} ≈ ${dbP.name} (${pct}%). Gộp?`;
+      confirmMoveModal.style.display = "flex";
+    }
+
+    function updateSummaryStatus() {
+      const skippedTotal = fileRecords.reduce((acc, r) => acc + r.unsureCount, 0);
+      setStatus(`${allFaces.length} mặt · ${skippedTotal} lọc · ${people.length} nhóm · ${unsureFaces.length} chưa chắc`);
+    }
+
+    async function confirmSavePersonToBottomDB(personIdx) {
+      const p = people[personIdx];
+      if (!p || !p.faces.length) return;
+
+      const cleanName = p.name.trim();
+      let existingDb = savedDBPeople.find(d => d.name.toLowerCase() === cleanName.toLowerCase());
+
+      try {
+        if (existingDb) {
+          for (const f of p.faces) {
+            f.mergedToSavedDB = true;
+            existingDb.faces.push({ id: f.id, url: f.url, fileName: f.fileName });
+            if (f.embedding) existingDb.embs.push(f.embedding);
+          }
+          existingDb.centroid = calcNormalizedCentroid(existingDb.embs);
+          await persistSavedPerson(existingDb);
+        } else {
+          const newDbPerson = {
+            id: `db_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+            name: cleanName,
+            embs: p.faces.filter(f => f.embedding).map(f => f.embedding),
+            faces: p.faces.map(f => ({ id: f.id, url: f.url, fileName: f.fileName }))
+          };
+          p.faces.forEach(f => { f.mergedToSavedDB = true; });
+          await persistSavedPerson(newDbPerson);
+        }
+
+        people.splice(personIdx, 1);
+        renderWorkingUI();
+        updateSummaryStatus();
+      } catch (err) {
+        setStatus("Lỗi lưu DB: " + err.message, true);
+      }
+    }
+
+    window.proposeReassignOnDelete = function(personIdx, faceId) {
+      const srcPerson = people[personIdx];
+      if (!srcPerson) return;
+      const fIdx = srcPerson.faces.findIndex(x => x.id === faceId);
+      if (fIdx < 0) return;
+
+      const face = srcPerson.faces[fIdx];
+      const nextStrikes = (face.strikes || 0) + 1;
+
+      if (nextStrikes >= 3) {
+        srcPerson.faces.splice(fIdx, 1);
+        face.strikes = 3;
+        face.manualGroupId = null;
+        face.excludedIds.add(srcPerson.id);
+        face.reason = "Đã xoá 3 lần";
+        recalcWorkingGroup(personIdx);
+        unsureFaces.push(face);
+        renderWorkingUI();
+        updateSummaryStatus();
+        return;
+      }
+
+      let bestCandidate = null;
+      let bestSim = -1;
+
+      for (let i = 0; i < people.length; i++) {
+        if (i === personIdx) continue;
+        if (face.excludedIds.has(people[i].id) || !people[i].centroid) continue;
+        const s = similarityToPerson(face.embedding, people[i]);
+        if (s > bestSim) {
+          bestSim = s;
+          bestCandidate = { isDB: false, person: people[i] };
+        }
+      }
+      for (const dbP of savedDBPeople) {
+        if (face.excludedIds.has(dbP.id)) continue;
+        const s = similarityToPerson(face.embedding, dbP);
+        if (s > bestSim) {
+          bestSim = s;
+          bestCandidate = { isDB: true, person: dbP };
+        }
+      }
+
+      if (!bestCandidate) {
+        srcPerson.faces.splice(fIdx, 1);
+        face.strikes = nextStrikes;
+        face.manualGroupId = null;
+        face.excludedIds.add(srcPerson.id);
+        face.reason = `Xoá ${face.strikes}/3`;
+        recalcWorkingGroup(personIdx);
+        unsureFaces.push(face);
+        renderWorkingUI();
+        updateSummaryStatus();
+        return;
+      }
+
+      const pct = Math.max(0, Math.round(bestSim * 100));
+      pendingModalAction = {
+        mode: "delete_reassign",
+        srcPersonId: srcPerson.id,
+        dstPersonId: bestCandidate.person.id,
+        dstIsDB: bestCandidate.isDB,
+        faceId: face.id
+      };
+
+      cmpTitle.textContent = "Đề xuất chuyển nhóm";
+      cmpSrcImg.src = face.url;
+      cmpSrcLabel.textContent = `${srcPerson.name} (${nextStrikes}/3)`;
+      cmpDstImg.src = bestCandidate.person.faces[0]?.url || "";
+      cmpDstLabel.textContent = `${bestCandidate.person.name}`;
+      cmpSimPct.textContent = `${pct}%`;
+      cmpDesc.textContent = `Giống ${bestCandidate.person.name} (${pct}%). Chuyển sang?`;
+      confirmMoveModal.style.display = "flex";
+    };
+
+    window.closeConfirmModal = function() {
+      confirmMoveModal.style.display = "none";
+      pendingModalAction = null;
+      if (dbMatchProposals.length > 0) {
+        setTimeout(showNextDbProposal, 120);
+      }
+    };
+
+    cmpYesBtn.addEventListener("click", async () => {
+      if (!pendingModalAction) return;
+      const act = pendingModalAction;
+
+      if (act.mode === "merge_to_db") {
+        const wIdx = people.findIndex(p => p.id === act.workingPersonId);
+        const dbP = savedDBPeople.find(p => p.id === act.dbPersonId);
+        if (wIdx >= 0 && dbP) {
+          const wP = people[wIdx];
+          for (const f of wP.faces) {
+            f.mergedToSavedDB = true;
+            dbP.faces.push({ id: f.id, url: f.url, fileName: f.fileName });
+            if (f.embedding) dbP.embs.push(f.embedding);
+          }
+          dbP.centroid = calcNormalizedCentroid(dbP.embs);
+          await persistSavedPerson(dbP);
+          people.splice(wIdx, 1);
+          renderWorkingUI();
+          updateSummaryStatus();
+        }
+        closeConfirmModal();
+        return;
+      }
+
+      if (act.mode === "delete_reassign") {
+        const srcIdx = people.findIndex(p => p.id === act.srcPersonId);
+        if (srcIdx < 0) { closeConfirmModal(); return; }
+        const fIdx = people[srcIdx].faces.findIndex(x => x.id === act.faceId);
+        if (fIdx < 0) { closeConfirmModal(); return; }
+
+        const [face] = people[srcIdx].faces.splice(fIdx, 1);
+        face.strikes = (face.strikes || 0) + 1;
+        face.excludedIds.add(people[srcIdx].id);
+        recalcWorkingGroup(srcIdx);
+
+        if (act.dstIsDB) {
+          const dbP = savedDBPeople.find(p => p.id === act.dstPersonId);
+          if (dbP) {
+            face.mergedToSavedDB = true;
+            dbP.faces.push({ id: face.id, url: face.url, fileName: face.fileName });
+            if (face.embedding) dbP.embs.push(face.embedding);
+            dbP.centroid = calcNormalizedCentroid(dbP.embs);
+            await persistSavedPerson(dbP);
+          }
+        } else {
+          const dstIdx = people.findIndex(p => p.id === act.dstPersonId);
+          if (dstIdx >= 0) {
+            face.manualGroupId = people[dstIdx].id;
+            people[dstIdx].faces.push(face);
+            if (face.embedding) people[dstIdx].embs.push(face.embedding);
+            if (people[dstIdx].embs.length) people[dstIdx].centroid = calcNormalizedCentroid(people[dstIdx].embs);
+          }
+        }
+
+        renderWorkingUI();
+        updateSummaryStatus();
+        closeConfirmModal();
+      }
+    });
+
+    cmpNoBtn.addEventListener("click", () => {
+      if (!pendingModalAction) return;
+      const act = pendingModalAction;
+
+      if (act.mode === "merge_to_db") {
+        closeConfirmModal();
+        return;
+      }
+
+      if (act.mode === "delete_reassign") {
+        const srcIdx = people.findIndex(p => p.id === act.srcPersonId);
+        if (srcIdx < 0) { closeConfirmModal(); return; }
+        const fIdx = people[srcIdx].faces.findIndex(x => x.id === act.faceId);
+        if (fIdx < 0) { closeConfirmModal(); return; }
+
+        const [face] = people[srcIdx].faces.splice(fIdx, 1);
+        face.strikes = (face.strikes || 0) + 1;
+        face.excludedIds.add(people[srcIdx].id);
+        face.excludedIds.add(act.dstPersonId);
+        face.manualGroupId = null;
+        recalcWorkingGroup(srcIdx);
+
+        if (face.strikes >= 3) {
+          face.reason = "Đã xoá 3 lần";
+          unsureFaces.push(face);
+        } else {
+          let nextIdx = -1;
+          let nextSim = 0.54;
+          for (let i = 0; i < people.length; i++) {
+            if (face.excludedIds.has(people[i].id) || !people[i].centroid) continue;
+            const s = similarityToPerson(face.embedding, people[i]);
+            if (s > nextSim) { nextSim = s; nextIdx = i; }
+          }
+          if (nextIdx >= 0) {
+            people[nextIdx].faces.push(face);
+            people[nextIdx].embs.push(face.embedding);
+            people[nextIdx].centroid = calcNormalizedCentroid(people[nextIdx].embs);
+          } else {
+            face.reason = `Xoá ${face.strikes}/3`;
+            unsureFaces.push(face);
+          }
+        }
+
+        renderWorkingUI();
+        updateSummaryStatus();
+        closeConfirmModal();
+      }
+    });
+
+    function recalcWorkingGroup(idx) {
+      const p = people[idx];
+      if (!p) return;
+      if (p.faces.length === 0 && !p.isManual) {
+        people.splice(idx, 1);
+      } else {
+        p.embs = p.faces.filter(x => x.embedding).map(x => x.embedding);
+        p.centroid = p.embs.length ? calcNormalizedCentroid(p.embs) : null;
+      }
+    }
+
+    function mergeWorkingPerson(fromIdx, toIdx) {
+      if (fromIdx === toIdx || !people[fromIdx] || !people[toIdx]) return;
+      const src = people[fromIdx];
+      const dst = people[toIdx];
+      const seen = new Set(dst.faces.map(f => f.id));
+      for (const f of src.faces) {
+        if (!seen.has(f.id)) {
+          seen.add(f.id);
+          f.manualGroupId = dst.id;
+          dst.faces.push(f);
+          if (f.embedding) dst.embs.push(f.embedding);
+        }
+      }
+      dst.isManual = true;
+      if (dst.embs.length) dst.centroid = calcNormalizedCentroid(dst.embs);
+      people.splice(fromIdx, 1);
+      renderWorkingUI();
+      updateSummaryStatus();
+    }
+
+    retryUnsureBtn.addEventListener("click", async () => {
+      if (!unsureFaces.length) return;
+      retryUnsureBtn.disabled = true;
+
+      try {
+        const stillUnsure = [];
+        const relaxedSim = Math.max(0.54, (parseFloat(simThresholdEl.value) / 100) - 0.08);
+
+        for (const f of unsureFaces) {
+          if (f.strikes >= 3 || !f.embedding) {
+            stillUnsure.push(f);
+            continue;
+          }
+          try {
+            const im = await new Promise((res, rej) => {
+              const i = new Image();
+              i.onload = () => res(i);
+              i.onerror = rej;
+              i.src = f.url;
+            });
+
+            const flipC = document.createElement("canvas");
+            flipC.width = 240; flipC.height = 240;
+            const ctx = flipC.getContext("2d");
+            ctx.translate(240, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(im, 0, 0, 240, 240);
+            const resFlip = await human.detect(flipC);
+            const embFlip = resFlip.face?.[0]?.embedding ? l2Normalize(resFlip.face[0].embedding) : null;
+            flipC.width = 0; flipC.height = 0;
+
+            let bestIdx = -1;
+            let bestS = relaxedSim;
+            for (let i = 0; i < people.length; i++) {
+              if ((f.excludedIds && f.excludedIds.has(people[i].id)) || !people[i].centroid) continue;
+              const s1 = similarityToPerson(f.embedding, people[i]);
+              const s2 = embFlip ? similarityToPerson(embFlip, people[i]) : 0;
+              const s = Math.max(s1, s2);
+              if (s > bestS) { bestS = s; bestIdx = i; }
+            }
+
+            if (bestIdx >= 0) {
+              people[bestIdx].faces.push(f);
+              people[bestIdx].embs.push(f.embedding);
+              people[bestIdx].centroid = calcNormalizedCentroid(people[bestIdx].embs);
+            } else {
+              stillUnsure.push(f);
+            }
+          } catch (_) {
+            stillUnsure.push(f);
+          }
+        }
+
+        unsureFaces = stillUnsure;
+        renderWorkingUI();
+        updateSummaryStatus();
+      } finally {
+        retryUnsureBtn.disabled = false;
+      }
+    });
+
+    function renderWorkingUI() {
+      unsureBadge.textContent = unsureFaces.length;
+      unsureGrid.innerHTML = "";
+      unsureFaces.forEach(f => {
+        const div = document.createElement("div");
+        div.className = "unsure-thumb";
+        div.title = f.reason || "";
+        div.innerHTML = `
+          <img src="${f.url}" />
+          ${f.strikes > 0 ? `<span class="strike-tag">${f.strikes}/3</span>` : ""}
+        `;
+        div.querySelector("img").onclick = () => openDetailModal("unsure", -1, f.id);
+        unsureGrid.appendChild(div);
+      });
+
+      peopleGrid.innerHTML = "";
+      people.forEach((p, idx) => {
+        const card = document.createElement("div");
+        card.className = "person-card";
+
+        card.innerHTML = `
+          <div class="person-head">
+            <img class="avatar" src="${p.faces[0]?.url || ""}" />
+            <input class="name-compact" value="${escHtml(p.name)}" />
+            <button class="confirm-btn">Lưu</button>
+            <span class="cnt-pill">${p.faces.length}</span>
+          </div>
+          <div class="faces-subgrid"></div>
+        `;
+
+        card.querySelector(".name-compact").addEventListener("change", (e) => {
+          p.name = e.target.value.trim() || `N${idx + 1}`;
+          p.isManual = true;
+          renderWorkingUI();
+        });
+
+        card.querySelector(".confirm-btn").addEventListener("click", () => {
+          confirmSavePersonToBottomDB(idx);
+        });
+
+        const sub = card.querySelector(".faces-subgrid");
+        p.faces.forEach(f => {
+          const item = document.createElement("div");
+          item.className = "face-item";
+          item.innerHTML = `
+            <img src="${f.url}" />
+            <button class="del-x">×</button>
+            ${f.strikes > 0 ? `<span class="strike-tag">${f.strikes}/3</span>` : ""}
+          `;
+          item.querySelector("img").onclick = () => openDetailModal("person", idx, f.id);
+          item.querySelector(".del-x").onclick = (ev) => {
+            ev.stopPropagation();
+            window.proposeReassignOnDelete(idx, f.id);
+          };
+          sub.appendChild(item);
+        });
+
+        peopleGrid.appendChild(card);
+      });
+    }
+
+    function renderSavedDBSection() {
+      savedPeopleGrid.innerHTML = "";
+      if (!savedDBPeople.length) {
+        savedPeopleGrid.innerHTML = `<div style="font-size:11.5px;color:var(--muted);grid-column:1/-1;">Chưa có ai. Đặt tên rồi bấm Lưu.</div>`;
+        return;
+      }
+
+      savedDBPeople.forEach(dbP => {
+        const card = document.createElement("div");
+        card.className = "saved-card";
+        card.innerHTML = `
+          <div class="person-head">
+            <img class="avatar" src="${dbP.faces[0]?.url || ""}" style="border-color:var(--ok);" />
+            <strong style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(dbP.name)}</strong>
+            <span class="lock-badge">${dbP.faces.length}</span>
+          </div>
+          <div class="faces-subgrid"></div>
+        `;
+        const sub = card.querySelector(".faces-subgrid");
+        dbP.faces.forEach(f => {
+          const item = document.createElement("div");
+          item.className = "face-item";
+          item.innerHTML = `<img src="${f.url}" />`;
+          item.querySelector("img").onclick = () => {
+            detailImg.src = f.url;
+            detailInfo.textContent = `${dbP.name} · ${f.fileName}`;
+            detailActions.style.display = "none";
+            detailModal.style.display = "flex";
+          };
+          sub.appendChild(item);
+        });
+        savedPeopleGrid.appendChild(card);
+      });
+    }
+
+    window.openDetailModal = function(source, personIdx, faceId) {
+      const face = source === "person"
+        ? people[personIdx]?.faces.find(x => x.id === faceId)
+        : unsureFaces.find(x => x.id === faceId);
+      if (!face) return;
+
+      detailCtx = { source, personIdx, faceId };
+      detailImg.src = face.url;
+      detailActions.style.display = "flex";
+
+      let simText = "";
+      if (source === "person" && people[personIdx]?.centroid && face.embedding) {
+        const pct = Math.round(similarityToPerson(face.embedding, people[personIdx]) * 100);
+        simText = ` · Khớp: ${pct}%`;
+      }
+      detailInfo.textContent = `${face.fileName} · Nghiêng ~${Math.round(face.yaw || 0)}°${simText}${face.reason ? " · " + face.reason : ""}`;
+
+      const workingOpts = people
+        .map((p, i) => (source === "person" && i === personIdx) ? "" : `<option value="w:${i}">${escHtml(p.name)} (${p.faces.length})</option>`)
+        .join("");
+      const dbOpts = savedDBPeople
+        .map(dbP => `<option value="db:${dbP.id}">[DB] ${escHtml(dbP.name)} (${dbP.faces.length})</option>`)
+        .join("");
+
+      moveTargetSelect.innerHTML = workingOpts + dbOpts;
+      detailModal.style.display = "flex";
+    };
+
+    window.closeDetailModal = function() {
+      detailModal.style.display = "none";
+      detailCtx = null;
+    };
+
+    moveTargetBtn.addEventListener("click", async () => {
+      if (!detailCtx) return;
+      const val = moveTargetSelect.value;
+      if (!val) return;
+
+      let face = null;
+      if (detailCtx.source === "person") {
+        const srcP = people[detailCtx.personIdx];
+        const i = srcP.faces.findIndex(x => x.id === detailCtx.faceId);
+        if (i >= 0) {
+          [face] = srcP.faces.splice(i, 1);
+          recalcWorkingGroup(detailCtx.personIdx);
+        }
+      } else {
+        const i = unsureFaces.findIndex(x => x.id === detailCtx.faceId);
+        if (i >= 0) [face] = unsureFaces.splice(i, 1);
+      }
+
+      if (face) {
+        if (val.startsWith("db:")) {
+          const dbId = val.slice(3);
+          const dbP = savedDBPeople.find(d => d.id === dbId);
+          if (dbP) {
+            face.mergedToSavedDB = true;
+            dbP.faces.push({ id: face.id, url: face.url, fileName: face.fileName });
+            if (face.embedding) dbP.embs.push(face.embedding);
+            dbP.centroid = calcNormalizedCentroid(dbP.embs);
+            await persistSavedPerson(dbP);
+          }
+        } else if (val.startsWith("w:")) {
+          const targetIdx = parseInt(val.slice(2), 10);
+          if (people[targetIdx]) {
+            face.manualGroupId = people[targetIdx].id;
+            people[targetIdx].faces.push(face);
+            if (face.embedding) people[targetIdx].embs.push(face.embedding);
+            if (people[targetIdx].embs.length) people[targetIdx].centroid = calcNormalizedCentroid(people[targetIdx].embs);
+          }
+        }
+      }
+
+      closeDetailModal();
+      renderWorkingUI();
+      updateSummaryStatus();
+    });
+  </script>
+</body>
+</html>
