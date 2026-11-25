@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Face Sorter v11 — MediaPipe + Dual ONNX (ArcFace & AdaFace)</title>
+  <title>Face Sorter v11.1 — MediaPipe + Dual ONNX (ArcFace & AdaFace)</title>
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
   <script type="module">
     import { FilesetResolver, FaceDetector, FaceLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
@@ -47,7 +47,7 @@
       align-items: center;
       gap: 6px;
     }
-    h1 { font-size: 16px; margin: 0; font-weight: 700; }
+    h1 { font-size: 15.5px; margin: 0; font-weight: 700; }
     .header-actions {
       display: flex;
       align-items: center;
@@ -61,6 +61,7 @@
       color: var(--accent);
       padding: 4px 8px;
       border-radius: 999px;
+      white-space: nowrap;
     }
     .model-pill {
       font-size: 10.5px;
@@ -70,6 +71,7 @@
       border: 1px solid var(--border);
       padding: 3px 7px;
       border-radius: 999px;
+      white-space: nowrap;
     }
 
     .upload-row {
@@ -105,7 +107,7 @@
       border: 1px solid var(--border);
       border-radius: 11px;
       padding: 6px;
-      min-width: 210px;
+      min-width: 215px;
       box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
       flex-direction: column;
       gap: 4px;
@@ -228,7 +230,7 @@
       border: 1px solid var(--border);
       border-radius: 9px;
       padding: 6px;
-      max-height: 185px;
+      max-height: 200px;
       overflow-y: auto;
       font-size: 11px;
     }
@@ -241,6 +243,7 @@
       padding: 4px 5px;
       border-bottom: 1px solid var(--border);
       text-align: left;
+      word-break: break-word;
     }
     .audit-table th { color: var(--muted); font-weight: 600; }
     .badge-zero { color: var(--danger); font-weight: 700; }
@@ -510,7 +513,7 @@
 
   <div class="topbar">
     <div class="title-row">
-      <h1>Face Sorter v11 — Dual ONNX</h1>
+      <h1>Face Sorter v11.1 — Dual ONNX</h1>
       <div class="header-actions">
         <span class="model-pill" id="activeModelPill">M1: ArcFace</span>
         <span class="db-pill">Đã lưu: <b id="dbCount">0</b></span>
@@ -564,11 +567,17 @@
       <div class="model-cfg-grid">
         <div class="model-cfg-row">
           <span><b>Model 1 (Quét chính — ArcFace ONNX):</b> <span id="m1Status">Chưa tải</span></span>
-          <input type="text" id="m1UrlInput" value="https://huggingface.co/public-data/insightface/resolve/main/models/buffalo_sc/w600k_mbf.onnx" />
+          <div style="display:flex;gap:4px;">
+            <input type="text" id="m1UrlInput" value="https://huggingface.co/public-data/insightface/resolve/main/models/buffalo_sc/w600k_mbf.onnx" />
+            <button id="reloadM1Btn" class="btn btn-sm btn-ghost">Tải lại</button>
+          </div>
         </div>
         <div class="model-cfg-row">
           <span><b>Model 2 (Chỉ tải khi bấm Thử lại — AdaFace ONNX):</b> <span id="m2Status">Chưa tải (chờ Thử lại)</span></span>
-          <input type="text" id="m2UrlInput" value="https://huggingface.co/MonsterMMORPG/tools/resolve/main/adaface_ir18_webface4m.onnx" />
+          <div style="display:flex;gap:4px;">
+            <input type="text" id="m2UrlInput" value="https://huggingface.co/MonsterMMORPG/tools/resolve/main/adaface_ir18_webface4m.onnx" />
+            <button id="reloadM2Btn" class="btn btn-sm btn-ghost">Tải</button>
+          </div>
         </div>
       </div>
     </div>
@@ -673,13 +682,23 @@
     const DB_NAME = "FaceSorterDualONNX_v11";
     const STORE_NAME = "saved_people";
 
-    // Tọa độ chuẩn 5 điểm mốc trên khung 112x112 (chuẩn ArcFace / InsightFace / AdaFace)
+    const M1_FALLBACK_URLS = [
+      "https://huggingface.co/public-data/insightface/resolve/main/models/buffalo_sc/w600k_mbf.onnx",
+      "https://huggingface.co/immich-app/buffalo_s/resolve/main/recognition/model.onnx",
+      "https://huggingface.co/immich-app/buffalo_l/resolve/main/recognition/model.onnx"
+    ];
+
+    const M2_FALLBACK_URLS = [
+      "https://huggingface.co/MonsterMMORPG/tools/resolve/main/adaface_ir18_webface4m.onnx",
+      "https://huggingface.co/public-data/insightface/resolve/main/models/buffalo_l/w600k_r50.onnx"
+    ];
+
     const REF_5PTS_112 = [
-      [38.2946, 51.6963], // mắt trái
-      [73.5318, 51.5014], // mắt phải
-      [56.0252, 71.7366], // chóp mũi
-      [41.5493, 92.3655], // khóe miệng trái
-      [70.7299, 92.2041]  // khóe miệng phải
+      [38.2946, 51.6963],
+      [73.5318, 51.5014],
+      [56.0252, 71.7366],
+      [41.5493, 92.3655],
+      [70.7299, 92.2041]
     ];
 
     const fileInput = document.getElementById("fileInput");
@@ -709,6 +728,8 @@
     const m2UrlInput = document.getElementById("m2UrlInput");
     const m1Status = document.getElementById("m1Status");
     const m2Status = document.getElementById("m2Status");
+    const reloadM1Btn = document.getElementById("reloadM1Btn");
+    const reloadM2Btn = document.getElementById("reloadM2Btn");
 
     const moreMenuBtn = document.getElementById("moreMenuBtn");
     const moreMenu = document.getElementById("moreMenu");
@@ -753,12 +774,11 @@
     const moveTargetSelect = document.getElementById("moveTargetSelect");
     const moveTargetBtn = document.getElementById("moveTargetBtn");
 
-    // MediaPipe & ONNX Sessions
     let faceDetector = null;
     let faceLandmarker = null;
-    let sessionM1 = null; // Model 1 (ArcFace - tải ban đầu)
-    let sessionM2 = null; // Model 2 (AdaFace - chỉ tải khi bấm Thử lại)
-    let activeSpace = "m1"; // "m1" hoặc "m2"
+    let sessionM1 = null;
+    let sessionM2 = null;
+    let activeSpace = "m1";
 
     let fileRecords = [];
     let processedFileKeys = new Set();
@@ -864,42 +884,58 @@
       await loadSavedDB();
     }
 
-    // --- Tải ONNX Session (hỗ trợ URL hoặc ArrayBuffer từ file trên máy) ---
+    // --- Tải ONNX Session kèm fallback URLs ---
     async function createOnnxSessionFromSource(source) {
       ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/";
-      ort.env.wasm.numThreads = 1; // Ổn định trên Safari iPad
-      const opts = { executionProviders: ["wasm"] };
-      return await ort.InferenceSession.create(source, opts);
+      ort.env.wasm.numThreads = 1;
+      return await ort.InferenceSession.create(source, { executionProviders: ["wasm"] });
+    }
+
+    async function loadModelWithFallback(primaryUrlOrBuf, fallbackUrls, statusEl, urlInputEl) {
+      statusEl.textContent = "Đang tải...";
+      if (primaryUrlOrBuf instanceof ArrayBuffer || primaryUrlOrBuf instanceof Uint8Array) {
+        try {
+          const sess = await createOnnxSessionFromSource(primaryUrlOrBuf);
+          statusEl.textContent = "Sẵn sàng (file nội bộ) ✓";
+          return sess;
+        } catch (err) {
+          statusEl.textContent = "Lỗi file ONNX: " + err.message;
+          return null;
+        }
+      }
+
+      const candidates = [primaryUrlOrBuf, ...fallbackUrls.filter(u => u !== primaryUrlOrBuf)].filter(Boolean);
+      let lastErr = null;
+      for (const u of candidates) {
+        try {
+          const sess = await createOnnxSessionFromSource(u);
+          if (urlInputEl) urlInputEl.value = u;
+          statusEl.textContent = "Sẵn sàng ✓";
+          return sess;
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+      statusEl.textContent = "Lỗi tải (" + (lastErr?.message || "CORS/Mạng") + ")";
+      return null;
     }
 
     async function loadModel1(customBuffer = null) {
-      m1Status.textContent = "Đang tải...";
-      try {
-        const src = customBuffer || m1UrlInput.value.trim();
-        sessionM1 = await createOnnxSessionFromSource(src);
-        m1Status.textContent = "Sẵn sàng ✓";
-        return true;
-      } catch (err) {
-        m1Status.textContent = "Lỗi tải (" + err.message + ")";
-        return false;
-      }
+      const src = customBuffer || m1UrlInput.value.trim();
+      sessionM1 = await loadModelWithFallback(src, M1_FALLBACK_URLS, m1Status, m1UrlInput);
+      return Boolean(sessionM1);
     }
 
-    // Model 2 CHỈ tải khi người dùng nhấn nút "Thử lại" (lazy load)
     async function ensureModel2Loaded(customBuffer = null) {
       if (sessionM2 && !customBuffer) return true;
-      m2Status.textContent = "Đang tải Model 2...";
       setStatus("Đang tải Model 2 (AdaFace ONNX) cho bước Thử lại...");
-      try {
-        const src = customBuffer || m2UrlInput.value.trim();
-        sessionM2 = await createOnnxSessionFromSource(src);
-        m2Status.textContent = "Sẵn sàng ✓";
-        return true;
-      } catch (err) {
-        m2Status.textContent = "Lỗi tải (" + err.message + ")";
-        setStatus("Không tải được Model 2: " + err.message + ". Có thể nạp file .onnx từ menu ⋯", true);
+      const src = customBuffer || m2UrlInput.value.trim();
+      sessionM2 = await loadModelWithFallback(src, M2_FALLBACK_URLS, m2Status, m2UrlInput);
+      if (!sessionM2) {
+        setStatus("Không tải được Model 2. Mở menu ⋯ để nạp file .onnx từ máy.", true);
         return false;
       }
+      return true;
     }
 
     async function initPipeline() {
@@ -937,7 +973,7 @@
         if (m1Ok) {
           updateSummaryStatus();
         } else {
-          setStatus("MediaPipe đã sẵn sàng, nhưng Model 1 chưa tải được (mở Nâng cao hoặc menu ⋯ để nạp .onnx).", true);
+          setStatus("MediaPipe sẵn sàng, nhưng Model 1 lỗi tải (mở Nâng cao hoặc menu ⋯ nạp .onnx).", true);
         }
       } catch (err) {
         setStatus("Lỗi khởi tạo MediaPipe: " + err.message, true);
@@ -962,6 +998,18 @@
       auditPanel.classList.toggle("open");
     });
 
+    reloadM1Btn.addEventListener("click", async () => {
+      const ok = await loadModel1();
+      if (ok && allFaces.length) {
+        await reextractMissingM1();
+      }
+    });
+
+    reloadM2Btn.addEventListener("click", async () => {
+      const ok = await ensureModel2Loaded(m2UrlInput.value.trim());
+      if (ok) setStatus("Đã nạp xong Model 2.");
+    });
+
     addPhotosBtn.addEventListener("click", () => {
       fileInput.value = "";
       fileInput.click();
@@ -983,7 +1031,10 @@
       if (!f) return;
       const buf = await f.arrayBuffer();
       const ok = await loadModel1(buf);
-      if (ok) setStatus(`Đã nạp Model 1 (${f.name}).`);
+      if (ok) {
+        setStatus(`Đã nạp Model 1 (${f.name}).`);
+        if (allFaces.length) await reextractMissingM1();
+      }
     });
 
     menuLoadLocalM2Btn.addEventListener("click", () => {
@@ -1040,7 +1091,7 @@
 
     menuRescanFailedBtn.addEventListener("click", async () => {
       moreMenu.classList.remove("open");
-      const retryTargets = fileRecords.filter(r => r.status === "Lỗi" || r.keptCount === 0);
+      const retryTargets = fileRecords.filter(r => r.status.startsWith("Lỗi") || r.keptCount === 0);
       if (!retryTargets.length) {
         setStatus("Không có ảnh lỗi hoặc ảnh 0 mặt cần quét lại.");
         return;
@@ -1208,7 +1259,6 @@
       return sum;
     }
 
-    // Ước lượng phép biến đổi Similarity Transform (scale, rotation, translation) từ 5 điểm mốc mặt -> REF_5PTS_112
     function estimateSimilarityTransform(srcPts, dstPts) {
       const n = srcPts.length;
       let meanSx = 0, meanSy = 0, meanDx = 0, meanDy = 0;
@@ -1236,7 +1286,6 @@
       return { a, b, tx, ty };
     }
 
-    // Căn chỉnh mặt về khung chuẩn 112x112
     function alignFace112(sourceCanvas, landmarks5, fallbackBox) {
       const out = document.createElement("canvas");
       out.width = 112;
@@ -1251,7 +1300,6 @@
         ctx.drawImage(sourceCanvas, 0, 0);
         ctx.setTransform(1, 0, 0, 1, 0, 0);
       } else {
-        // Fallback crop vuông nếu thiếu 5 điểm mốc
         const cx = fallbackBox.x + fallbackBox.width / 2;
         const cy = fallbackBox.y + fallbackBox.height / 2;
         const side = Math.max(fallbackBox.width, fallbackBox.height) * 1.15;
@@ -1264,7 +1312,6 @@
       return out;
     }
 
-    // Đánh giá chất lượng ảnh mặt 112x112: độ nét Laplacian + độ sáng
     function assessFaceQuality112(canvas112) {
       const ctx = canvas112.getContext("2d");
       const { data } = ctx.getImageData(0, 0, 112, 112);
@@ -1278,7 +1325,6 @@
       }
       const meanLum = sumLum / (112 * 112);
 
-      // Phương sai Laplacian 4-lân cận ở vùng trung tâm mặt (bỏ viền 14px)
       let lapSum = 0, lapSqSum = 0, cnt = 0;
       for (let y = 14; y < 98; y++) {
         for (let x = 14; x < 98; x++) {
@@ -1291,33 +1337,61 @@
       }
       const meanLap = lapSum / cnt;
       const lapVar = (lapSqSum / cnt) - meanLap * meanLap;
-      // Chuẩn hóa thang 0..100 dễ đọc
       const sharpness = Math.min(100, Math.round(Math.sqrt(Math.max(0, lapVar)) * 2.2));
       return { sharpness, brightness: Math.round(meanLum) };
     }
 
-    // Chạy inference ONNX (ArcFace / AdaFace) từ canvas 112x112 -> trả về { vec512, rawNorm }
-    async function extractOnnxEmbedding(session, canvas112) {
-      if (!session) return null;
+    // Tự động nhận biết NCHW [1, 3, 112, 112] vs NHWC [1, 112, 112, 3] từ metadata của ONNX model
+    function detectModelInputLayout(session) {
+      try {
+        const inputName = session.inputNames[0];
+        const meta = session.inputMetadata?.[inputName];
+        const dims = meta?.dimensions || meta?.shape || [];
+        if (dims.length === 4 && dims[3] === 3) return "NHWC";
+      } catch (_) {}
+      return "NCHW";
+    }
+
+    function buildInputTensor(canvas112, layout) {
       const ctx = canvas112.getContext("2d");
       const { data } = ctx.getImageData(0, 0, 112, 112);
-      const floatData = new Float32Array(3 * 112 * 112);
       const planeSize = 112 * 112;
+      const floatData = new Float32Array(3 * planeSize);
 
-      // Chuẩn hóa (pixel - 127.5) / 127.5 theo thứ tự NCHW (RGB)
-      for (let i = 0; i < planeSize; i++) {
-        const r = (data[i * 4] - 127.5) / 127.5;
-        const g = (data[i * 4 + 1] - 127.5) / 127.5;
-        const b = (data[i * 4 + 2] - 127.5) / 127.5;
-        floatData[i] = r;
-        floatData[planeSize + i] = g;
-        floatData[2 * planeSize + i] = b;
+      if (layout === "NHWC") {
+        for (let i = 0; i < planeSize; i++) {
+          floatData[i * 3] = (data[i * 4] - 127.5) / 127.5;
+          floatData[i * 3 + 1] = (data[i * 4 + 1] - 127.5) / 127.5;
+          floatData[i * 3 + 2] = (data[i * 4 + 2] - 127.5) / 127.5;
+        }
+        return new ort.Tensor("float32", floatData, [1, 112, 112, 3]);
+      } else {
+        for (let i = 0; i < planeSize; i++) {
+          floatData[i] = (data[i * 4] - 127.5) / 127.5;
+          floatData[planeSize + i] = (data[i * 4 + 1] - 127.5) / 127.5;
+          floatData[2 * planeSize + i] = (data[i * 4 + 2] - 127.5) / 127.5;
+        }
+        return new ort.Tensor("float32", floatData, [1, 3, 112, 112]);
+      }
+    }
+
+    async function extractOnnxEmbedding(session, canvas112) {
+      if (!session) return null;
+      const inputName = session.inputNames[0];
+      const outName = session.outputNames[0];
+      const preferredLayout = detectModelInputLayout(session);
+
+      let outputs = null;
+      try {
+        const tensor = buildInputTensor(canvas112, preferredLayout);
+        outputs = await session.run({ [inputName]: tensor });
+      } catch (firstErr) {
+        // Thử layout ngược lại nếu model báo sai shape
+        const altLayout = preferredLayout === "NCHW" ? "NHWC" : "NCHW";
+        const tensorAlt = buildInputTensor(canvas112, altLayout);
+        outputs = await session.run({ [inputName]: tensorAlt });
       }
 
-      const inputName = session.inputNames[0];
-      const tensor = new ort.Tensor("float32", floatData, [1, 3, 112, 112]);
-      const outputs = await session.run({ [inputName]: tensor });
-      const outName = session.outputNames[0];
       const raw = Float32Array.from(outputs[outName].data);
       const rawNorm = vectorNorm(raw);
       return {
@@ -1333,10 +1407,8 @@
       return { yaw, pitch };
     }
 
-    // Lấy 5 điểm mốc từ MediaPipe FaceLandmarker (478 điểm)
     function extract5PointsFrom478(lms, w, h) {
       if (!lms || lms.length < 478) return null;
-      // Tâm mống mắt trái (468), tâm mống mắt phải (473), chóp mũi (1), khóe miệng trái (61), khóe miệng phải (291)
       const ids = [468, 473, 1, 61, 291];
       return ids.map(idx => [lms[idx].x * w, lms[idx].y * h]);
     }
@@ -1391,7 +1463,6 @@
       return inter / Math.max(1, a.width * a.height + b.width * b.height - inter);
     }
 
-    // Bước 2: Dò mặt bằng MediaPipe FaceDetector (toàn ảnh + lát 2x2 chồng lấn + NMS)
     function detectFacesMediaPipeTiles(canvas) {
       const rawDets = [];
 
@@ -1401,10 +1472,8 @@
           const bb = det.boundingBox;
           if (!bb) continue;
           const kps = (det.keypoints || []).map(kp => [kp.x * subC.width + ox, kp.y * subC.height + oy]);
-          // MediaPipe FaceDetector keypoints: 0=rightEye, 1=leftEye, 2=noseTip, 3=mouthCenter, 4=rightEar, 5=leftEar
           let kps5 = null;
           if (kps.length >= 4) {
-            // Ước lượng 2 khóe miệng từ mắt & tâm miệng nếu FaceLandmarker chưa bắt được mặt xa
             const eyeDx = kps[0][0] - kps[1][0];
             const eyeDy = kps[0][1] - kps[1][1];
             const leftMouth = [kps[3][0] - eyeDx * 0.42, kps[3][1] - eyeDy * 0.42];
@@ -1492,7 +1561,7 @@
         div.innerHTML = `<img src="${item.thumbUrl}" /><span class="orig-idx">${idx + 1}</span>`;
         div.onclick = () => {
           detailImg.src = item.fullUrl;
-          detailInfo.textContent = `Ảnh #${idx + 1}: ${item.name} · Dò: ${item.detectedCount} · Giữ: ${item.keptCount} · Chưa chắc: ${item.unsureCount}`;
+          detailInfo.textContent = `Ảnh #${idx + 1}: ${item.name} · Dò: ${item.detectedCount} · Giữ: ${item.keptCount} · Chưa chắc: ${item.unsureCount} · ${item.status}`;
           detailActions.style.display = "none";
           detailModal.style.display = "flex";
         };
@@ -1504,10 +1573,11 @@
       auditBody.innerHTML = "";
       fileRecords.forEach((r, idx) => {
         const tr = document.createElement("tr");
-        const stHtml = r.status === "Lỗi"
-          ? `<span class="badge-zero">Lỗi</span>`
+        const isErr = r.status.startsWith("Lỗi");
+        const stHtml = isErr
+          ? `<span class="badge-zero">${escHtml(r.status)}</span>`
           : r.keptCount === 0
-            ? `<span class="badge-zero">0 mặt</span>`
+            ? `<span class="badge-zero">0 mặt giữ</span>`
             : `<span class="badge-ok">OK</span>`;
         tr.innerHTML = `
           <td>#${idx + 1} ${escHtml(r.name)}</td>
@@ -1520,7 +1590,38 @@
       });
     }
 
-    // --- Quy trình 6 bước hoàn chỉnh cho ảnh mới ---
+    async function reextractMissingM1() {
+      if (!sessionM1) return;
+      let fixed = 0;
+      for (const f of allFaces) {
+        if (f.embM1) continue;
+        try {
+          const img = await new Promise((res, rej) => {
+            const im = new Image();
+            im.onload = () => res(im);
+            im.onerror = rej;
+            im.src = f.alignedUrl;
+          });
+          const c112 = document.createElement("canvas");
+          c112.width = 112;
+          c112.height = 112;
+          c112.getContext("2d").drawImage(img, 0, 0, 112, 112);
+          const outM1 = await extractOnnxEmbedding(sessionM1, c112);
+          c112.width = 0; c112.height = 0;
+          if (outM1) {
+            f.embM1 = outM1.vec;
+            f.normM1 = outM1.rawNorm;
+            if (f.forcedUnsureReason.startsWith("Chưa có Model 1") || f.forcedUnsureReason.startsWith("Lỗi M1")) {
+              f.forcedUnsureReason = "";
+            }
+            fixed++;
+          }
+        } catch (_) {}
+      }
+      if (fixed > 0) reclusterPreservingManual();
+    }
+
+    // --- Quy trình 6 bước hoàn chỉnh (không bao giờ rơi mất mặt khi ONNX lỗi) ---
     async function processFilesIncremental(files) {
       addPhotosBtn.disabled = true;
       try {
@@ -1547,39 +1648,41 @@
           }
 
           try {
-            // Bước 1: Nạp & chuẩn hóa ảnh
             const canvas = await fileToCanvas(file, 1800);
             const baseName = file.name.replace(/\.[^.]+$/, "");
             rec.thumbUrl = makeThumbUrl(canvas, 84);
             rec.fullUrl = canvas.toDataURL("image/jpeg", 0.85);
 
-            // Bước 2: Dò mặt toàn ảnh + lát 2x2 + NMS
             const detections = detectFacesMediaPipeTiles(canvas);
             rec.detectedCount = detections.length;
 
-            // Bước 3: MediaPipe FaceLandmarker (478 điểm 3D + Pose)
-            const lmRes = faceLandmarker.detect(canvas);
+            // FaceLandmarker bọc try/catch riêng để nếu ảnh quá lớn/nhiều mặt vẫn không làm hỏng vòng lặp
             const lmEntries = [];
-            if (lmRes && lmRes.faceLandmarks) {
-              lmRes.faceLandmarks.forEach((lms, k) => {
-                let minX = 1, minY = 1, maxX = 0, maxY = 0;
-                for (const pt of lms) {
-                  if (pt.x < minX) minX = pt.x;
-                  if (pt.y < minY) minY = pt.y;
-                  if (pt.x > maxX) maxX = pt.x;
-                  if (pt.y > maxY) maxY = pt.y;
-                }
-                const pose = lmRes.facialTransformationMatrixes?.[k]
-                  ? estimatePoseFromMatrix(lmRes.facialTransformationMatrixes[k].data)
-                  : { yaw: 0, pitch: 0 };
-                lmEntries.push({
-                  cx: ((minX + maxX) / 2) * canvas.width,
-                  cy: ((minY + maxY) / 2) * canvas.height,
-                  pts5: extract5PointsFrom478(lms, canvas.width, canvas.height),
-                  yaw: pose.yaw,
-                  pitch: pose.pitch
+            try {
+              const lmRes = faceLandmarker.detect(canvas);
+              if (lmRes && lmRes.faceLandmarks) {
+                lmRes.faceLandmarks.forEach((lms, k) => {
+                  let minX = 1, minY = 1, maxX = 0, maxY = 0;
+                  for (const pt of lms) {
+                    if (pt.x < minX) minX = pt.x;
+                    if (pt.y < minY) minY = pt.y;
+                    if (pt.x > maxX) maxX = pt.x;
+                    if (pt.y > maxY) maxY = pt.y;
+                  }
+                  const pose = lmRes.facialTransformationMatrixes?.[k]
+                    ? estimatePoseFromMatrix(lmRes.facialTransformationMatrixes[k].data)
+                    : { yaw: 0, pitch: 0 };
+                  lmEntries.push({
+                    cx: ((minX + maxX) / 2) * canvas.width,
+                    cy: ((minY + maxY) / 2) * canvas.height,
+                    pts5: extract5PointsFrom478(lms, canvas.width, canvas.height),
+                    yaw: pose.yaw,
+                    pitch: pose.pitch
+                  });
                 });
-              });
+              }
+            } catch (lmErr) {
+              console.warn("FaceLandmarker fallback:", lmErr);
             }
 
             for (let idx = 0; idx < detections.length; idx++) {
@@ -1588,7 +1691,6 @@
               const cx = box.x + box.width / 2;
               const cy = box.y + box.height / 2;
 
-              // Khớp landmark 478 điểm gần nhất với bbox
               let matchedLm = null;
               let bestD = Infinity;
               for (const entry of lmEntries) {
@@ -1602,23 +1704,28 @@
               const pts5 = matchedLm?.pts5 || detKps5;
               const yaw = matchedLm?.yaw ?? 0;
 
-              // Bước 4: Căn chỉnh (Align) về khung chuẩn 112x112
               const alignedCanvas112 = alignFace112(canvas, pts5, box);
               const alignedUrl = alignedCanvas112.toDataURL("image/jpeg", 0.92);
               const displayUrl = cropDisplaySquare(canvas, box, 240);
-
-              // Lọc chất lượng mặt (FIQA cơ bản: kích thước, độ nét Laplacian, độ sáng)
               const qual = assessFaceQuality112(alignedCanvas112);
 
-              // Bước 5: Trích xuất Embedding Model 1 (ArcFace ONNX)
+              // Bọc try/catch riêng cho ONNX Model 1 — lỗi sẽ đẩy sang Chưa chắc kèm lý do chứ KHÔNG xoá mất mặt
               let embM1 = null;
               let normM1 = 0;
+              let onnxErrReason = "";
               if (sessionM1) {
-                const outM1 = await extractOnnxEmbedding(sessionM1, alignedCanvas112);
-                if (outM1) {
-                  embM1 = outM1.vec;
-                  normM1 = outM1.rawNorm;
+                try {
+                  const outM1 = await extractOnnxEmbedding(sessionM1, alignedCanvas112);
+                  if (outM1) {
+                    embM1 = outM1.vec;
+                    normM1 = outM1.rawNorm;
+                  }
+                } catch (onnxErr) {
+                  onnxErrReason = "Lỗi M1: " + (onnxErr?.message || "ONNX");
+                  console.warn("Lỗi ONNX từng mặt:", onnxErr);
                 }
+              } else {
+                onnxErrReason = "Chưa có Model 1 (bấm Thử lại Model 2 hoặc nạp .onnx)";
               }
 
               alignedCanvas112.width = 0;
@@ -1626,8 +1733,8 @@
 
               let forcedUnsureReason = "";
               const minSharp = parseFloat(minSharpnessEl.value);
-              if (!embM1) {
-                forcedUnsureReason = "Chưa có Model 1";
+              if (onnxErrReason) {
+                forcedUnsureReason = onnxErrReason;
               } else if (box.width < 22 || box.height < 22) {
                 forcedUnsureReason = `Quá nhỏ (${Math.round(box.width)}px)`;
               } else if (qual.sharpness < minSharp) {
@@ -1643,7 +1750,7 @@
                 alignedUrl,
                 fileName: `${baseName}_m${idx + 1}.jpg`,
                 embM1,
-                embM2: null, // Chưa chạy Model 2 cho tới khi bấm Thử lại
+                embM2: null,
                 normM1,
                 normM2: 0,
                 sharpness: qual.sharpness,
@@ -1672,7 +1779,7 @@
             processedFileKeys.add(fileKey);
             canvas.width = 0; canvas.height = 0;
           } catch (err) {
-            rec.status = "Lỗi";
+            rec.status = "Lỗi: " + (err?.message || "không xác định");
             console.warn("Lỗi quét ảnh:", file.name, err);
           }
 
@@ -1680,7 +1787,6 @@
           renderAuditTable();
         }
 
-        // Bước 6: Gom nhóm & đối chiếu DB
         assignIncrementalFaces(newlyExtractedFaces);
         updateSummaryStatus();
         queueDatabaseMatchProposals();
@@ -1790,7 +1896,7 @@
 
         const emb = getActiveEmb(f);
         if (!emb) {
-          f.reason = "Thiếu embedding";
+          f.reason = f.forcedUnsureReason || "Thiếu embedding";
           unsureFaces.push(f);
           continue;
         }
@@ -1848,7 +1954,7 @@
       updateSummaryStatus();
     }
 
-    // --- Bấm "Thử lại": chỉ tại đây mới tải Model 2 (AdaFace) và chạy lại cho các mặt Chưa chắc / toàn bộ ---
+    // --- Bấm "Thử lại": chỉ tại đây mới tải Model 2 (AdaFace) và chạy lại ---
     retryUnsureBtn.addEventListener("click", async () => {
       if (!allFaces.length) return;
       retryUnsureBtn.disabled = true;
@@ -1860,7 +1966,6 @@
         setStatus("Đang trích xuất đặc trưng bằng Model 2 (AdaFace)...");
         let countM2 = 0;
 
-        // Trích xuất embedding Model 2 từ ảnh đã căn chỉnh 112x112 cho các mặt chưa lưu DB
         for (const f of allFaces) {
           if (f.mergedToSavedDB || f.embM2) continue;
           const img = await new Promise((res, rej) => {
@@ -1874,18 +1979,21 @@
           c112.height = 112;
           c112.getContext("2d").drawImage(img, 0, 0, 112, 112);
 
-          const outM2 = await extractOnnxEmbedding(sessionM2, c112);
-          c112.width = 0; c112.height = 0;
-
-          if (outM2) {
-            f.embM2 = outM2.vec;
-            f.normM2 = outM2.rawNorm;
-            f.forcedUnsureReason = "";
-            countM2++;
+          try {
+            const outM2 = await extractOnnxEmbedding(sessionM2, c112);
+            if (outM2) {
+              f.embM2 = outM2.vec;
+              f.normM2 = outM2.rawNorm;
+              f.forcedUnsureReason = "";
+              countM2++;
+            }
+          } catch (e) {
+            f.forcedUnsureReason = "Lỗi M2: " + (e?.message || "ONNX");
+          } finally {
+            c112.width = 0; c112.height = 0;
           }
         }
 
-        // Chuyển không gian vector sang Model 2 (AdaFace) và nới nhẹ ngưỡng mờ vì AdaFace chịu mờ tốt hơn
         activeSpace = "m2";
         activeModelPill.textContent = "M2: AdaFace";
         if (parseFloat(minSharpnessEl.value) > 8) {
