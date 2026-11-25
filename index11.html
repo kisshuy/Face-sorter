@@ -1,0 +1,2395 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Face Sorter v11 — MediaPipe + Dual ONNX (ArcFace & AdaFace)</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/ort.min.js"></script>
+  <script type="module">
+    import { FilesetResolver, FaceDetector, FaceLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+    window.__MP_VISION__ = { FilesetResolver, FaceDetector, FaceLandmarker };
+  </script>
+  <style>
+    :root {
+      --bg: #eef1f5;
+      --card: #ffffff;
+      --text: #18202c;
+      --muted: #5c6778;
+      --accent: #0f62fe;
+      --accent-soft: #e6efff;
+      --ok: #15803d;
+      --ok-soft: #dcfce7;
+      --danger: #c62828;
+      --warn: #b45309;
+      --border: #dfe4ec;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 10px 10px 48px 10px;
+    }
+    .topbar {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 13px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .title-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 6px;
+    }
+    h1 { font-size: 16px; margin: 0; font-weight: 700; }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      position: relative;
+    }
+    .db-pill {
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--accent-soft);
+      color: var(--accent);
+      padding: 4px 8px;
+      border-radius: 999px;
+    }
+    .model-pill {
+      font-size: 10.5px;
+      font-weight: 600;
+      background: #f1f5f9;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 3px 7px;
+      border-radius: 999px;
+    }
+
+    .upload-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 7px 12px;
+      font-size: 12.5px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .btn:disabled { background: #aeb8c7; cursor: not-allowed; }
+    .btn-ghost { background: #f2f4f8; color: var(--text); border: 1px solid var(--border); }
+    .btn-ok { background: var(--ok); color: #fff; }
+    .btn-danger { background: #fee2e2; color: var(--danger); border: 1px solid #fecaca; }
+    .btn-sm { padding: 4px 8px; font-size: 11.5px; border-radius: 7px; }
+
+    .more-menu {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: 34px;
+      z-index: 950;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 6px;
+      min-width: 210px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+      flex-direction: column;
+      gap: 4px;
+    }
+    .more-menu.open { display: flex; }
+    .more-menu button {
+      text-align: left;
+      width: 100%;
+      background: transparent;
+      border: none;
+      padding: 7px 9px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text);
+      border-radius: 7px;
+      cursor: pointer;
+    }
+    .more-menu button:hover { background: #f1f5f9; }
+    .more-menu button.danger-item { color: var(--danger); }
+    .menu-sep { height: 1px; background: var(--border); margin: 2px 0; }
+
+    .originals-roll {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      flex: 1;
+      min-height: 44px;
+      padding: 3px 6px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+    }
+    .orig-thumb {
+      position: relative;
+      width: 38px;
+      height: 38px;
+      border-radius: 6px;
+      overflow: hidden;
+      flex-shrink: 0;
+      border: 1px solid #cbd5e1;
+      cursor: pointer;
+    }
+    .orig-thumb.zero-face { border: 1.5px solid var(--danger); }
+    .orig-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .orig-idx {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      font-size: 8.5px;
+      background: rgba(15, 23, 42, 0.74);
+      color: #fff;
+      padding: 0 3px;
+      border-top-left-radius: 4px;
+    }
+
+    .meta-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+    .meta-row label { display: flex; align-items: center; gap: 5px; font-weight: 600; color: var(--text); }
+    input[type="range"] { width: 96px; }
+    .adv-box {
+      display: none;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding-top: 6px;
+      border-top: 1px dashed var(--border);
+    }
+    .adv-box.open { display: flex; }
+
+    .model-cfg-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+      width: 100%;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 7px;
+      font-size: 11px;
+    }
+    .model-cfg-row {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .model-cfg-row input[type="text"] {
+      width: 100%;
+      font-size: 11px;
+      padding: 4px 6px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .stats-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      background: #f6f9ff;
+      border: 1px solid #d9e6ff;
+      padding: 5px 9px;
+      border-radius: 8px;
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .stats-row.err { color: var(--danger); background: #fef2f2; border-color: #fecaca; }
+
+    .audit-panel {
+      display: none;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      padding: 6px;
+      max-height: 185px;
+      overflow-y: auto;
+      font-size: 11px;
+    }
+    .audit-panel.open { display: block; }
+    .audit-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .audit-table th, .audit-table td {
+      padding: 4px 5px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    .audit-table th { color: var(--muted); font-weight: 600; }
+    .badge-zero { color: var(--danger); font-weight: 700; }
+    .badge-ok { color: var(--ok); font-weight: 700; }
+
+    .unsure-strip {
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-radius: 11px;
+      padding: 6px 8px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 58px;
+    }
+    .unsure-badge {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--warn);
+      background: #fef3c7;
+      padding: 3px 6px;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    .unsure-scroll {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      flex: 1;
+      align-items: center;
+    }
+    .unsure-thumb {
+      position: relative;
+      width: 46px;
+      height: 46px;
+      border-radius: 7px;
+      overflow: hidden;
+      flex-shrink: 0;
+      border: 1px solid #f59e0b;
+      background: #eee;
+    }
+    .unsure-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      cursor: pointer;
+      display: block;
+    }
+
+    .people-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 9px;
+      align-items: start;
+    }
+    .person-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 8px;
+      min-width: 0;
+    }
+    .person-head {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      margin-bottom: 6px;
+    }
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+      border: 1.5px solid var(--accent);
+      background: #e2e8f0;
+    }
+    .name-compact {
+      flex: 1;
+      min-width: 0;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 5px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+    .confirm-btn {
+      padding: 3px 7px;
+      font-size: 11px;
+      border-radius: 6px;
+      border: 1px solid #bbf7d0;
+      background: var(--ok-soft);
+      color: var(--ok);
+      font-weight: 700;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+    .cnt-pill {
+      font-size: 11px;
+      color: var(--muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .faces-subgrid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 4px;
+    }
+    .face-item {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #e9edf3;
+    }
+    .face-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      cursor: pointer;
+    }
+    .del-x {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 17px;
+      height: 17px;
+      border-radius: 50%;
+      border: none;
+      background: rgba(20, 24, 30, 0.74);
+      color: #fff;
+      font-size: 11px;
+      line-height: 1;
+      padding: 0;
+      cursor: pointer;
+    }
+    .strike-tag {
+      position: absolute;
+      bottom: 2px;
+      left: 2px;
+      font-size: 9px;
+      background: rgba(0,0,0,0.68);
+      color: #fff;
+      padding: 1px 3px;
+      border-radius: 3px;
+      pointer-events: none;
+    }
+
+    .saved-db-section {
+      margin-top: 16px;
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+      border-radius: 13px;
+      padding: 10px;
+    }
+    .saved-db-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: var(--ok);
+    }
+    .saved-card {
+      background: #ffffff;
+      border: 1.5px solid #4ade80;
+      border-radius: 12px;
+      padding: 8px;
+      min-width: 0;
+    }
+    .lock-badge {
+      font-size: 10px;
+      background: var(--ok-soft);
+      color: var(--ok);
+      padding: 2px 5px;
+      border-radius: 5px;
+      font-weight: 700;
+    }
+
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(12, 16, 22, 0.85);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+    }
+    .modal-box {
+      position: relative;
+      background: #fff;
+      color: var(--text);
+      border-radius: 14px;
+      padding: 13px;
+      max-width: 430px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .modal-close-x {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.92);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      z-index: 5;
+    }
+    .compare-row {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 8px;
+      align-items: center;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+    }
+    .compare-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      font-size: 11.5px;
+      font-weight: 600;
+      text-align: center;
+    }
+    .compare-card img {
+      width: 92px;
+      height: 92px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .sim-badge {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 12px;
+      padding: 5px 8px;
+      border-radius: 8px;
+      text-align: center;
+    }
+    .modal-main-img {
+      width: 100%;
+      max-height: 54vh;
+      object-fit: contain;
+      border-radius: 9px;
+      background: #111;
+    }
+    .modal-info { font-size: 12px; color: var(--muted); line-height: 1.4; }
+    .modal-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="title-row">
+      <h1>Face Sorter v11 — Dual ONNX</h1>
+      <div class="header-actions">
+        <span class="model-pill" id="activeModelPill">M1: ArcFace</span>
+        <span class="db-pill">Đã lưu: <b id="dbCount">0</b></span>
+        <button id="moreMenuBtn" class="btn btn-sm btn-ghost" title="Tùy chọn">⋯</button>
+        <div id="moreMenu" class="more-menu">
+          <button id="menuAddPersonBtn">+ Thêm người thủ công</button>
+          <button id="menuMergeGroupsBtn">Gộp hai nhóm</button>
+          <button id="menuRescanFailedBtn">Quét lại ảnh lỗi / 0 mặt</button>
+          <button id="menuResetSessionBtn">Làm lại phiên từ đầu</button>
+          <div class="menu-sep"></div>
+          <button id="menuLoadLocalM1Btn">Nạp file ONNX Model 1 từ máy</button>
+          <button id="menuLoadLocalM2Btn">Nạp file ONNX Model 2 từ máy</button>
+          <div class="menu-sep"></div>
+          <button id="menuExportDbBtn">Xuất DB (JSON)</button>
+          <button id="menuImportDbBtn">Nhập DB (JSON)</button>
+          <div class="menu-sep"></div>
+          <button id="menuClearDbBtn" class="danger-item">Xoá toàn bộ DB</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="upload-row">
+      <input type="file" id="fileInput" accept="image/*" multiple hidden />
+      <input type="file" id="importDbInput" accept="application/json" hidden />
+      <input type="file" id="localM1Input" accept=".onnx" hidden />
+      <input type="file" id="localM2Input" accept=".onnx" hidden />
+      <button id="addPhotosBtn" class="btn" disabled>Đang tải AI...</button>
+      <div id="originalsRoll" class="originals-roll" title="Ảnh gốc đã thêm (chạm để xem)">
+        <span style="font-size:11px;color:var(--muted);">Chưa có ảnh gốc</span>
+      </div>
+    </div>
+
+    <div class="meta-row">
+      <label>Khớp tối thiểu: <span id="simLabel">46%</span>
+        <input type="range" id="simThreshold" min="25" max="85" step="1" value="46" />
+      </label>
+      <button id="toggleAdvBtn" class="btn btn-sm btn-ghost" style="margin-left:auto;">Nâng cao ▾</button>
+    </div>
+
+    <div id="advBox" class="adv-box">
+      <label style="font-size:11.5px;font-weight:600;">Góc nghiêng tối đa: <span id="yawLabel">45°</span>
+        <input type="range" id="maxYaw" min="20" max="65" step="1" value="45" />
+      </label>
+      <label style="font-size:11.5px;font-weight:600;">Độ nét tối thiểu: <span id="sharpLabel">18</span>
+        <input type="range" id="minSharpness" min="0" max="80" step="2" value="18" />
+      </label>
+      <label style="font-size:11.5px;font-weight:600;">
+        <input type="checkbox" id="tileScanToggle" checked /> Quét lát 2×2
+      </label>
+
+      <div class="model-cfg-grid">
+        <div class="model-cfg-row">
+          <span><b>Model 1 (Quét chính — ArcFace ONNX):</b> <span id="m1Status">Chưa tải</span></span>
+          <input type="text" id="m1UrlInput" value="https://huggingface.co/public-data/insightface/resolve/main/models/buffalo_sc/w600k_mbf.onnx" />
+        </div>
+        <div class="model-cfg-row">
+          <span><b>Model 2 (Chỉ tải khi bấm Thử lại — AdaFace ONNX):</b> <span id="m2Status">Chưa tải (chờ Thử lại)</span></span>
+          <input type="text" id="m2UrlInput" value="https://huggingface.co/MonsterMMORPG/tools/resolve/main/adaface_ir18_webface4m.onnx" />
+        </div>
+      </div>
+    </div>
+
+    <div id="statusRow" class="stats-row">
+      <span id="statusText">Đang tải MediaPipe & Model 1 (ArcFace)...</span>
+      <button id="toggleAuditBtn" class="btn btn-sm btn-ghost" style="padding:2px 6px;font-size:10.5px;">Đối soát</button>
+    </div>
+
+    <div id="auditPanel" class="audit-panel">
+      <table class="audit-table">
+        <thead>
+          <tr>
+            <th>Ảnh</th>
+            <th>Dò</th>
+            <th>Giữ</th>
+            <th>Loại→Chưa chắc</th>
+            <th>Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Thanh Chưa chắc -->
+  <div class="unsure-strip">
+    <span class="unsure-badge" id="unsureBadge">0</span>
+    <div id="unsureGrid" class="unsure-scroll"></div>
+    <button id="retryUnsureBtn" class="btn btn-sm btn-ghost">Thử lại (Model 2)</button>
+  </div>
+
+  <!-- Lưới nhóm làm việc -->
+  <div id="peopleGrid" class="people-grid"></div>
+
+  <!-- Khung Đã lưu (DB) -->
+  <div class="saved-db-section">
+    <div class="saved-db-header">
+      <span>Đã lưu (<span id="savedPeopleCount">0</span>)</span>
+    </div>
+    <div id="savedPeopleGrid" class="people-grid"></div>
+  </div>
+
+  <!-- Modal xác nhận chuyển / gộp -->
+  <div id="confirmMoveModal" class="overlay" onclick="closeConfirmModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <button class="modal-close-x" onclick="closeConfirmModal()">✕</button>
+      <div id="cmpTitle" style="font-size:13.5px;font-weight:700;padding-right:24px;">Đề xuất chuyển</div>
+      <div class="compare-row">
+        <div class="compare-card">
+          <img id="cmpSrcImg" src="" alt="" />
+          <span id="cmpSrcLabel"></span>
+        </div>
+        <div class="sim-badge" id="cmpSimPct">0%</div>
+        <div class="compare-card">
+          <img id="cmpDstImg" src="" alt="" />
+          <span id="cmpDstLabel"></span>
+        </div>
+      </div>
+      <div id="cmpDesc" class="modal-info"></div>
+      <div class="modal-actions">
+        <button id="cmpNoBtn" class="btn btn-sm btn-danger">Giữ nguyên</button>
+        <button id="cmpYesBtn" class="btn btn-sm btn-ok">Chuyển</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal gộp hai nhóm -->
+  <div id="mergeModal" class="overlay" onclick="closeMergeModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <button class="modal-close-x" onclick="closeMergeModal()">✕</button>
+      <div style="font-size:13.5px;font-weight:700;">Gộp hai nhóm</div>
+      <div class="modal-info">Chọn nhóm nguồn và nhóm đích:</div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <select id="mergeSrcSel" style="flex:1;padding:6px;border-radius:7px;border:1px solid var(--border);"></select>
+        <span>→</span>
+        <select id="mergeDstSel" style="flex:1;padding:6px;border-radius:7px;border:1px solid var(--border);"></select>
+      </div>
+      <div class="modal-actions">
+        <button id="confirmMergeBtn" class="btn btn-sm btn-ok">Gộp nhóm</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal xem chi tiết -->
+  <div id="detailModal" class="overlay" onclick="closeDetailModal()">
+    <div class="modal-box" onclick="event.stopPropagation()">
+      <button class="modal-close-x" onclick="closeDetailModal()">✕</button>
+      <img id="detailImg" class="modal-main-img" src="" alt="" />
+      <div id="detailInfo" class="modal-info"></div>
+      <div id="detailActions" class="modal-actions">
+        <select id="moveTargetSelect"></select>
+        <button id="moveTargetBtn" class="btn btn-sm">Chuyển</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    const MP_WASM_URL = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm";
+    const MP_DETECTOR_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite";
+    const MP_LANDMARKER_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+    const DB_NAME = "FaceSorterDualONNX_v11";
+    const STORE_NAME = "saved_people";
+
+    // Tọa độ chuẩn 5 điểm mốc trên khung 112x112 (chuẩn ArcFace / InsightFace / AdaFace)
+    const REF_5PTS_112 = [
+      [38.2946, 51.6963], // mắt trái
+      [73.5318, 51.5014], // mắt phải
+      [56.0252, 71.7366], // chóp mũi
+      [41.5493, 92.3655], // khóe miệng trái
+      [70.7299, 92.2041]  // khóe miệng phải
+    ];
+
+    const fileInput = document.getElementById("fileInput");
+    const importDbInput = document.getElementById("importDbInput");
+    const localM1Input = document.getElementById("localM1Input");
+    const localM2Input = document.getElementById("localM2Input");
+    const addPhotosBtn = document.getElementById("addPhotosBtn");
+    const originalsRoll = document.getElementById("originalsRoll");
+    const statusRow = document.getElementById("statusRow");
+    const statusText = document.getElementById("statusText");
+    const activeModelPill = document.getElementById("activeModelPill");
+
+    const simThresholdEl = document.getElementById("simThreshold");
+    const simLabel = document.getElementById("simLabel");
+    const maxYawEl = document.getElementById("maxYaw");
+    const yawLabel = document.getElementById("yawLabel");
+    const minSharpnessEl = document.getElementById("minSharpness");
+    const sharpLabel = document.getElementById("sharpLabel");
+    const tileScanToggle = document.getElementById("tileScanToggle");
+    const toggleAdvBtn = document.getElementById("toggleAdvBtn");
+    const advBox = document.getElementById("advBox");
+    const toggleAuditBtn = document.getElementById("toggleAuditBtn");
+    const auditPanel = document.getElementById("auditPanel");
+    const auditBody = document.getElementById("auditBody");
+
+    const m1UrlInput = document.getElementById("m1UrlInput");
+    const m2UrlInput = document.getElementById("m2UrlInput");
+    const m1Status = document.getElementById("m1Status");
+    const m2Status = document.getElementById("m2Status");
+
+    const moreMenuBtn = document.getElementById("moreMenuBtn");
+    const moreMenu = document.getElementById("moreMenu");
+    const menuAddPersonBtn = document.getElementById("menuAddPersonBtn");
+    const menuMergeGroupsBtn = document.getElementById("menuMergeGroupsBtn");
+    const menuRescanFailedBtn = document.getElementById("menuRescanFailedBtn");
+    const menuResetSessionBtn = document.getElementById("menuResetSessionBtn");
+    const menuLoadLocalM1Btn = document.getElementById("menuLoadLocalM1Btn");
+    const menuLoadLocalM2Btn = document.getElementById("menuLoadLocalM2Btn");
+    const menuExportDbBtn = document.getElementById("menuExportDbBtn");
+    const menuImportDbBtn = document.getElementById("menuImportDbBtn");
+    const menuClearDbBtn = document.getElementById("menuClearDbBtn");
+
+    const peopleGrid = document.getElementById("peopleGrid");
+    const savedPeopleGrid = document.getElementById("savedPeopleGrid");
+    const savedPeopleCountEl = document.getElementById("savedPeopleCount");
+    const unsureGrid = document.getElementById("unsureGrid");
+    const unsureBadge = document.getElementById("unsureBadge");
+    const retryUnsureBtn = document.getElementById("retryUnsureBtn");
+    const dbCountEl = document.getElementById("dbCount");
+
+    const confirmMoveModal = document.getElementById("confirmMoveModal");
+    const cmpTitle = document.getElementById("cmpTitle");
+    const cmpSrcImg = document.getElementById("cmpSrcImg");
+    const cmpSrcLabel = document.getElementById("cmpSrcLabel");
+    const cmpDstImg = document.getElementById("cmpDstImg");
+    const cmpDstLabel = document.getElementById("cmpDstLabel");
+    const cmpSimPct = document.getElementById("cmpSimPct");
+    const cmpDesc = document.getElementById("cmpDesc");
+    const cmpYesBtn = document.getElementById("cmpYesBtn");
+    const cmpNoBtn = document.getElementById("cmpNoBtn");
+
+    const mergeModal = document.getElementById("mergeModal");
+    const mergeSrcSel = document.getElementById("mergeSrcSel");
+    const mergeDstSel = document.getElementById("mergeDstSel");
+    const confirmMergeBtn = document.getElementById("confirmMergeBtn");
+
+    const detailModal = document.getElementById("detailModal");
+    const detailImg = document.getElementById("detailImg");
+    const detailInfo = document.getElementById("detailInfo");
+    const detailActions = document.getElementById("detailActions");
+    const moveTargetSelect = document.getElementById("moveTargetSelect");
+    const moveTargetBtn = document.getElementById("moveTargetBtn");
+
+    // MediaPipe & ONNX Sessions
+    let faceDetector = null;
+    let faceLandmarker = null;
+    let sessionM1 = null; // Model 1 (ArcFace - tải ban đầu)
+    let sessionM2 = null; // Model 2 (AdaFace - chỉ tải khi bấm Thử lại)
+    let activeSpace = "m1"; // "m1" hoặc "m2"
+
+    let fileRecords = [];
+    let processedFileKeys = new Set();
+    let allFaces = [];
+    let people = [];
+    let unsureFaces = [];
+    let savedDBPeople = [];
+    let dbMatchProposals = [];
+    let pendingModalAction = null;
+    let detailCtx = null;
+    let idSeq = 0;
+    let sliderTimer = null;
+
+    function escHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function setStatus(msg, isErr = false) {
+      statusText.textContent = msg;
+      statusRow.className = isErr ? "stats-row err" : "stats-row";
+    }
+
+    // --- IndexedDB ---
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(DB_NAME, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME, { keyPath: "id" });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error("Lỗi mở IndexedDB"));
+        req.onblocked = () => reject(new Error("IndexedDB bị khóa"));
+      });
+    }
+
+    async function loadSavedDB() {
+      try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const rows = await new Promise((res, rej) => {
+          const r = tx.objectStore(STORE_NAME).getAll();
+          r.onsuccess = () => res(r.result || []);
+          r.onerror = () => rej(r.error || new Error("Lỗi đọc DB"));
+          tx.onerror = () => rej(tx.error || new Error("Lỗi giao dịch đọc DB"));
+          tx.onabort = () => rej(tx.error || new Error("Giao dịch đọc DB bị hủy"));
+        });
+        savedDBPeople = rows.map(r => ({
+          id: r.id,
+          name: r.name,
+          space: r.space || "m1",
+          centroid: l2Normalize(Float32Array.from(r.centroid)),
+          embs: (r.embs || []).map(e => l2Normalize(Float32Array.from(e))),
+          faces: (r.faces || []).map(f => ({
+            id: f.id,
+            url: f.url,
+            alignedUrl: f.alignedUrl || f.url,
+            fileName: f.fileName || r.name
+          }))
+        }));
+        dbCountEl.textContent = savedDBPeople.length;
+        savedPeopleCountEl.textContent = savedDBPeople.length;
+        renderSavedDBSection();
+      } catch (err) {
+        setStatus("Lỗi tải DB: " + err.message, true);
+      }
+    }
+
+    async function persistSavedPerson(personObj) {
+      const validEmbs = (personObj.embs || []).map(e => Array.from(e));
+      if (!validEmbs.length) return;
+      const centroidArr = Array.from(calcNormalizedCentroid(validEmbs.map(e => Float32Array.from(e))));
+      const savedFaces = (personObj.faces || []).map(f => ({
+        id: f.id,
+        url: f.url,
+        alignedUrl: f.alignedUrl || f.url,
+        fileName: f.fileName || ""
+      }));
+
+      const db = await openDB();
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      tx.objectStore(STORE_NAME).put({
+        id: personObj.id,
+        name: personObj.name.trim(),
+        space: personObj.space || activeSpace,
+        centroid: centroidArr,
+        embs: validEmbs,
+        faces: savedFaces,
+        updatedAt: Date.now()
+      });
+      await new Promise((res, rej) => {
+        tx.oncomplete = () => res();
+        tx.onerror = () => rej(tx.error || new Error("Lỗi lưu DB"));
+        tx.onabort = () => rej(tx.error || new Error("Lưu DB bị hủy"));
+      });
+      await loadSavedDB();
+    }
+
+    // --- Tải ONNX Session (hỗ trợ URL hoặc ArrayBuffer từ file trên máy) ---
+    async function createOnnxSessionFromSource(source) {
+      ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.19.2/dist/";
+      ort.env.wasm.numThreads = 1; // Ổn định trên Safari iPad
+      const opts = { executionProviders: ["wasm"] };
+      return await ort.InferenceSession.create(source, opts);
+    }
+
+    async function loadModel1(customBuffer = null) {
+      m1Status.textContent = "Đang tải...";
+      try {
+        const src = customBuffer || m1UrlInput.value.trim();
+        sessionM1 = await createOnnxSessionFromSource(src);
+        m1Status.textContent = "Sẵn sàng ✓";
+        return true;
+      } catch (err) {
+        m1Status.textContent = "Lỗi tải (" + err.message + ")";
+        return false;
+      }
+    }
+
+    // Model 2 CHỈ tải khi người dùng nhấn nút "Thử lại" (lazy load)
+    async function ensureModel2Loaded(customBuffer = null) {
+      if (sessionM2 && !customBuffer) return true;
+      m2Status.textContent = "Đang tải Model 2...";
+      setStatus("Đang tải Model 2 (AdaFace ONNX) cho bước Thử lại...");
+      try {
+        const src = customBuffer || m2UrlInput.value.trim();
+        sessionM2 = await createOnnxSessionFromSource(src);
+        m2Status.textContent = "Sẵn sàng ✓";
+        return true;
+      } catch (err) {
+        m2Status.textContent = "Lỗi tải (" + err.message + ")";
+        setStatus("Không tải được Model 2: " + err.message + ". Có thể nạp file .onnx từ menu ⋯", true);
+        return false;
+      }
+    }
+
+    async function initPipeline() {
+      await loadSavedDB();
+      try {
+        let wait = 0;
+        while (!window.__MP_VISION__ && wait < 120) {
+          await new Promise(r => setTimeout(r, 100));
+          wait++;
+        }
+        if (!window.__MP_VISION__) throw new Error("Không tải được MediaPipe Tasks Vision.");
+
+        const { FilesetResolver, FaceDetector, FaceLandmarker } = window.__MP_VISION__;
+        const vision = await FilesetResolver.forVisionTasks(MP_WASM_URL);
+
+        faceDetector = await FaceDetector.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MP_DETECTOR_URL, delegate: "CPU" },
+          runningMode: "IMAGE",
+          minDetectionConfidence: 0.35
+        });
+
+        faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MP_LANDMARKER_URL, delegate: "CPU" },
+          runningMode: "IMAGE",
+          numFaces: 30,
+          minFaceDetectionConfidence: 0.35,
+          minFacePresenceConfidence: 0.35,
+          outputFacialTransformationMatrixes: true
+        });
+
+        const m1Ok = await loadModel1();
+        addPhotosBtn.disabled = false;
+        addPhotosBtn.textContent = "Thêm ảnh";
+
+        if (m1Ok) {
+          updateSummaryStatus();
+        } else {
+          setStatus("MediaPipe đã sẵn sàng, nhưng Model 1 chưa tải được (mở Nâng cao hoặc menu ⋯ để nạp .onnx).", true);
+        }
+      } catch (err) {
+        setStatus("Lỗi khởi tạo MediaPipe: " + err.message, true);
+      }
+    }
+
+    initPipeline();
+
+    // --- UI Events ---
+    moreMenuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      moreMenu.classList.toggle("open");
+    });
+    document.addEventListener("click", () => moreMenu.classList.remove("open"));
+
+    toggleAdvBtn.addEventListener("click", () => {
+      advBox.classList.toggle("open");
+      toggleAdvBtn.textContent = advBox.classList.contains("open") ? "Nâng cao ▴" : "Nâng cao ▾";
+    });
+
+    toggleAuditBtn.addEventListener("click", () => {
+      auditPanel.classList.toggle("open");
+    });
+
+    addPhotosBtn.addEventListener("click", () => {
+      fileInput.value = "";
+      fileInput.click();
+    });
+
+    fileInput.addEventListener("change", async () => {
+      const files = Array.from(fileInput.files || []);
+      if (!files.length) return;
+      await processFilesIncremental(files);
+    });
+
+    menuLoadLocalM1Btn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      localM1Input.value = "";
+      localM1Input.click();
+    });
+    localM1Input.addEventListener("change", async () => {
+      const f = localM1Input.files?.[0];
+      if (!f) return;
+      const buf = await f.arrayBuffer();
+      const ok = await loadModel1(buf);
+      if (ok) setStatus(`Đã nạp Model 1 (${f.name}).`);
+    });
+
+    menuLoadLocalM2Btn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      localM2Input.value = "";
+      localM2Input.click();
+    });
+    localM2Input.addEventListener("change", async () => {
+      const f = localM2Input.files?.[0];
+      if (!f) return;
+      const buf = await f.arrayBuffer();
+      const ok = await ensureModel2Loaded(buf);
+      if (ok) setStatus(`Đã nạp Model 2 (${f.name}).`);
+    });
+
+    menuAddPersonBtn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      const name = prompt("Nhập tên người mới:");
+      if (!name || !name.trim()) return;
+      people.push({
+        id: `p_manual_${Date.now()}`,
+        name: name.trim(),
+        centroid: null,
+        embs: [],
+        faces: [],
+        isManual: true
+      });
+      renderWorkingUI();
+      updateSummaryStatus();
+    });
+
+    menuMergeGroupsBtn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      if (people.length < 2) {
+        setStatus("Cần ít nhất 2 nhóm để gộp.");
+        return;
+      }
+      const opts = people.map((p, idx) => `<option value="${idx}">${escHtml(p.name)} (${p.faces.length})</option>`).join("");
+      mergeSrcSel.innerHTML = opts;
+      mergeDstSel.innerHTML = opts;
+      if (people.length > 1) mergeDstSel.selectedIndex = 1;
+      mergeModal.style.display = "flex";
+    });
+
+    window.closeMergeModal = function() { mergeModal.style.display = "none"; };
+
+    confirmMergeBtn.addEventListener("click", () => {
+      const fromIdx = parseInt(mergeSrcSel.value, 10);
+      const toIdx = parseInt(mergeDstSel.value, 10);
+      if (Number.isNaN(fromIdx) || Number.isNaN(toIdx) || fromIdx === toIdx) return;
+      mergeWorkingPerson(fromIdx, toIdx);
+      closeMergeModal();
+    });
+
+    menuRescanFailedBtn.addEventListener("click", async () => {
+      moreMenu.classList.remove("open");
+      const retryTargets = fileRecords.filter(r => r.status === "Lỗi" || r.keptCount === 0);
+      if (!retryTargets.length) {
+        setStatus("Không có ảnh lỗi hoặc ảnh 0 mặt cần quét lại.");
+        return;
+      }
+      retryTargets.forEach(r => processedFileKeys.delete(r.key));
+      await processFilesIncremental(retryTargets.map(r => r.file));
+    });
+
+    menuResetSessionBtn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      if (!confirm("Làm lại phiên hiện tại? (Dữ liệu Đã lưu vẫn được giữ nguyên)")) return;
+      fileRecords = [];
+      processedFileKeys.clear();
+      allFaces = [];
+      people = [];
+      unsureFaces = [];
+      activeSpace = "m1";
+      activeModelPill.textContent = "M1: ArcFace";
+      renderOriginalsRoll();
+      renderAuditTable();
+      renderWorkingUI();
+      updateSummaryStatus();
+    });
+
+    menuExportDbBtn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      const dataStr = JSON.stringify(savedDBPeople.map(p => ({
+        id: p.id,
+        name: p.name,
+        space: p.space,
+        centroid: Array.from(p.centroid),
+        embs: p.embs.map(e => Array.from(e)),
+        faces: p.faces
+      })));
+      const blob = new Blob([dataStr], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `face-sorter-v11-db-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+    });
+
+    menuImportDbBtn.addEventListener("click", () => {
+      moreMenu.classList.remove("open");
+      importDbInput.value = "";
+      importDbInput.click();
+    });
+
+    importDbInput.addEventListener("change", async () => {
+      const f = importDbInput.files?.[0];
+      if (!f) return;
+      try {
+        const arr = JSON.parse(await f.text());
+        if (!Array.isArray(arr)) throw new Error("JSON không hợp lệ");
+        for (const item of arr) {
+          if (!item.name || !Array.isArray(item.embs) || !item.embs.length) continue;
+          await persistSavedPerson({
+            id: item.id || `db_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+            name: String(item.name).trim(),
+            space: item.space || "m1",
+            embs: item.embs.map(e => l2Normalize(Float32Array.from(e))),
+            faces: Array.isArray(item.faces) ? item.faces : []
+          });
+        }
+        updateSummaryStatus();
+        setStatus(`Đã nhập ${arr.length} người vào DB.`);
+      } catch (err) {
+        setStatus("Lỗi nhập DB: " + err.message, true);
+      }
+    });
+
+    menuClearDbBtn.addEventListener("click", async () => {
+      moreMenu.classList.remove("open");
+      if (!confirm("Xoá vĩnh viễn toàn bộ người đã lưu trong Database?")) return;
+      try {
+        const db = await openDB();
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        tx.objectStore(STORE_NAME).clear();
+        await new Promise((res, rej) => {
+          tx.oncomplete = () => res();
+          tx.onerror = () => rej(tx.error);
+          tx.onabort = () => rej(tx.error);
+        });
+        savedDBPeople = [];
+        dbCountEl.textContent = "0";
+        savedPeopleCountEl.textContent = "0";
+        allFaces.forEach(f => { f.mergedToSavedDB = false; });
+        renderSavedDBSection();
+        reclusterPreservingManual();
+      } catch (err) {
+        setStatus("Lỗi xoá DB: " + err.message, true);
+      }
+    });
+
+    function scheduleRecluster() {
+      clearTimeout(sliderTimer);
+      sliderTimer = setTimeout(() => {
+        if (allFaces.length > 0) reclusterPreservingManual();
+      }, 160);
+    }
+
+    simThresholdEl.addEventListener("input", () => {
+      simLabel.textContent = `${simThresholdEl.value}%`;
+      scheduleRecluster();
+    });
+    maxYawEl.addEventListener("input", () => {
+      yawLabel.textContent = `${maxYawEl.value}°`;
+      scheduleRecluster();
+    });
+    minSharpnessEl.addEventListener("input", () => {
+      sharpLabel.textContent = `${minSharpnessEl.value}`;
+      scheduleRecluster();
+    });
+
+    // --- Toán học vector & Căn chỉnh 5 điểm mốc về 112x112 ---
+    function l2Normalize(vec) {
+      let norm = 0;
+      for (let i = 0; i < vec.length; i++) norm += vec[i] * vec[i];
+      norm = Math.sqrt(norm) || 1;
+      const out = new Float32Array(vec.length);
+      for (let i = 0; i < vec.length; i++) out[i] = vec[i] / norm;
+      return out;
+    }
+
+    function vectorNorm(vec) {
+      let s = 0;
+      for (let i = 0; i < vec.length; i++) s += vec[i] * vec[i];
+      return Math.sqrt(s);
+    }
+
+    function cosineSimilarity(a, b) {
+      if (!a || !b || a.length !== b.length) return -1;
+      let dot = 0;
+      for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+      return Math.max(-1, Math.min(1, dot));
+    }
+
+    function getActiveEmb(face) {
+      return activeSpace === "m2" ? (face.embM2 || face.embM1) : face.embM1;
+    }
+
+    function similarityToPerson(emb, person) {
+      if (!emb || !person || !person.centroid) return 0;
+      const simCentroid = cosineSimilarity(emb, person.centroid);
+      let maxSampleSim = simCentroid;
+      for (const s of (person.embs || [])) {
+        const sim = cosineSimilarity(emb, s);
+        if (sim > maxSampleSim) maxSampleSim = sim;
+      }
+      return 0.65 * maxSampleSim + 0.35 * simCentroid;
+    }
+
+    function calcNormalizedCentroid(vectors) {
+      const len = vectors[0].length;
+      const sum = new Float32Array(len);
+      for (const v of vectors) {
+        for (let i = 0; i < len; i++) sum[i] += v[i];
+      }
+      let norm = 0;
+      for (let i = 0; i < len; i++) {
+        sum[i] /= vectors.length;
+        norm += sum[i] * sum[i];
+      }
+      norm = Math.sqrt(norm) || 1;
+      for (let i = 0; i < len; i++) sum[i] /= norm;
+      return sum;
+    }
+
+    // Ước lượng phép biến đổi Similarity Transform (scale, rotation, translation) từ 5 điểm mốc mặt -> REF_5PTS_112
+    function estimateSimilarityTransform(srcPts, dstPts) {
+      const n = srcPts.length;
+      let meanSx = 0, meanSy = 0, meanDx = 0, meanDy = 0;
+      for (let i = 0; i < n; i++) {
+        meanSx += srcPts[i][0]; meanSy += srcPts[i][1];
+        meanDx += dstPts[i][0]; meanDy += dstPts[i][1];
+      }
+      meanSx /= n; meanSy /= n; meanDx /= n; meanDy /= n;
+
+      let varS = 0, covA = 0, covB = 0;
+      for (let i = 0; i < n; i++) {
+        const sx = srcPts[i][0] - meanSx;
+        const sy = srcPts[i][1] - meanSy;
+        const dx = dstPts[i][0] - meanDx;
+        const dy = dstPts[i][1] - meanDy;
+        varS += sx * sx + sy * sy;
+        covA += sx * dx + sy * dy;
+        covB += sx * dy - sy * dx;
+      }
+      varS = varS || 1;
+      const a = covA / varS;
+      const b = covB / varS;
+      const tx = meanDx - (a * meanSx - b * meanSy);
+      const ty = meanDy - (b * meanSx + a * meanSy);
+      return { a, b, tx, ty };
+    }
+
+    // Căn chỉnh mặt về khung chuẩn 112x112
+    function alignFace112(sourceCanvas, landmarks5, fallbackBox) {
+      const out = document.createElement("canvas");
+      out.width = 112;
+      out.height = 112;
+      const ctx = out.getContext("2d");
+      ctx.fillStyle = "#18202c";
+      ctx.fillRect(0, 0, 112, 112);
+
+      if (landmarks5 && landmarks5.length === 5) {
+        const { a, b, tx, ty } = estimateSimilarityTransform(landmarks5, REF_5PTS_112);
+        ctx.setTransform(a, b, -b, a, tx, ty);
+        ctx.drawImage(sourceCanvas, 0, 0);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+      } else {
+        // Fallback crop vuông nếu thiếu 5 điểm mốc
+        const cx = fallbackBox.x + fallbackBox.width / 2;
+        const cy = fallbackBox.y + fallbackBox.height / 2;
+        const side = Math.max(fallbackBox.width, fallbackBox.height) * 1.15;
+        const x1 = Math.max(0, Math.round(cx - side / 2));
+        const y1 = Math.max(0, Math.round(cy - side / 2));
+        const w = Math.min(sourceCanvas.width - x1, Math.round(side));
+        const h = Math.min(sourceCanvas.height - y1, Math.round(side));
+        ctx.drawImage(sourceCanvas, x1, y1, Math.max(1, w), Math.max(1, h), 0, 0, 112, 112);
+      }
+      return out;
+    }
+
+    // Đánh giá chất lượng ảnh mặt 112x112: độ nét Laplacian + độ sáng
+    function assessFaceQuality112(canvas112) {
+      const ctx = canvas112.getContext("2d");
+      const { data } = ctx.getImageData(0, 0, 112, 112);
+      const gray = new Float32Array(112 * 112);
+      let sumLum = 0;
+
+      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+        const g = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        gray[p] = g;
+        sumLum += g;
+      }
+      const meanLum = sumLum / (112 * 112);
+
+      // Phương sai Laplacian 4-lân cận ở vùng trung tâm mặt (bỏ viền 14px)
+      let lapSum = 0, lapSqSum = 0, cnt = 0;
+      for (let y = 14; y < 98; y++) {
+        for (let x = 14; x < 98; x++) {
+          const idx = y * 112 + x;
+          const lap = 4 * gray[idx] - gray[idx - 1] - gray[idx + 1] - gray[idx - 112] - gray[idx + 112];
+          lapSum += lap;
+          lapSqSum += lap * lap;
+          cnt++;
+        }
+      }
+      const meanLap = lapSum / cnt;
+      const lapVar = (lapSqSum / cnt) - meanLap * meanLap;
+      // Chuẩn hóa thang 0..100 dễ đọc
+      const sharpness = Math.min(100, Math.round(Math.sqrt(Math.max(0, lapVar)) * 2.2));
+      return { sharpness, brightness: Math.round(meanLum) };
+    }
+
+    // Chạy inference ONNX (ArcFace / AdaFace) từ canvas 112x112 -> trả về { vec512, rawNorm }
+    async function extractOnnxEmbedding(session, canvas112) {
+      if (!session) return null;
+      const ctx = canvas112.getContext("2d");
+      const { data } = ctx.getImageData(0, 0, 112, 112);
+      const floatData = new Float32Array(3 * 112 * 112);
+      const planeSize = 112 * 112;
+
+      // Chuẩn hóa (pixel - 127.5) / 127.5 theo thứ tự NCHW (RGB)
+      for (let i = 0; i < planeSize; i++) {
+        const r = (data[i * 4] - 127.5) / 127.5;
+        const g = (data[i * 4 + 1] - 127.5) / 127.5;
+        const b = (data[i * 4 + 2] - 127.5) / 127.5;
+        floatData[i] = r;
+        floatData[planeSize + i] = g;
+        floatData[2 * planeSize + i] = b;
+      }
+
+      const inputName = session.inputNames[0];
+      const tensor = new ort.Tensor("float32", floatData, [1, 3, 112, 112]);
+      const outputs = await session.run({ [inputName]: tensor });
+      const outName = session.outputNames[0];
+      const raw = Float32Array.from(outputs[outName].data);
+      const rawNorm = vectorNorm(raw);
+      return {
+        vec: l2Normalize(raw),
+        rawNorm
+      };
+    }
+
+    function estimatePoseFromMatrix(matrixData) {
+      if (!matrixData || matrixData.length < 16) return { yaw: 0, pitch: 0 };
+      const yaw = Math.abs((Math.atan2(matrixData[8], matrixData[10]) * 180) / Math.PI);
+      const pitch = Math.abs((Math.asin(-Math.max(-1, Math.min(1, matrixData[9]))) * 180) / Math.PI);
+      return { yaw, pitch };
+    }
+
+    // Lấy 5 điểm mốc từ MediaPipe FaceLandmarker (478 điểm)
+    function extract5PointsFrom478(lms, w, h) {
+      if (!lms || lms.length < 478) return null;
+      // Tâm mống mắt trái (468), tâm mống mắt phải (473), chóp mũi (1), khóe miệng trái (61), khóe miệng phải (291)
+      const ids = [468, 473, 1, 61, 291];
+      return ids.map(idx => [lms[idx].x * w, lms[idx].y * h]);
+    }
+
+    function fileToCanvas(file, maxDim = 1800) {
+      return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            if (width >= height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const c = document.createElement("canvas");
+          c.width = width;
+          c.height = height;
+          c.getContext("2d").drawImage(img, 0, 0, width, height);
+          URL.revokeObjectURL(url);
+          resolve(c);
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error("Lỗi đọc ảnh"));
+        };
+        img.src = url;
+      });
+    }
+
+    function makeThumbUrl(canvas, size = 84) {
+      const t = document.createElement("canvas");
+      t.width = size;
+      t.height = size;
+      t.getContext("2d").drawImage(canvas, 0, 0, size, size);
+      const u = t.toDataURL("image/jpeg", 0.78);
+      t.width = 0; t.height = 0;
+      return u;
+    }
+
+    function boxIoU(a, b) {
+      const x1 = Math.max(a.x, b.x);
+      const y1 = Math.max(a.y, b.y);
+      const x2 = Math.min(a.x + a.width, b.x + b.width);
+      const y2 = Math.min(a.y + a.height, b.y + b.height);
+      const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+      if (inter <= 0) return 0;
+      return inter / Math.max(1, a.width * a.height + b.width * b.height - inter);
+    }
+
+    // Bước 2: Dò mặt bằng MediaPipe FaceDetector (toàn ảnh + lát 2x2 chồng lấn + NMS)
+    function detectFacesMediaPipeTiles(canvas) {
+      const rawDets = [];
+
+      const runOnSubCanvas = (subC, ox, oy) => {
+        const res = faceDetector.detect(subC);
+        for (const det of (res.detections || [])) {
+          const bb = det.boundingBox;
+          if (!bb) continue;
+          const kps = (det.keypoints || []).map(kp => [kp.x * subC.width + ox, kp.y * subC.height + oy]);
+          // MediaPipe FaceDetector keypoints: 0=rightEye, 1=leftEye, 2=noseTip, 3=mouthCenter, 4=rightEar, 5=leftEar
+          let kps5 = null;
+          if (kps.length >= 4) {
+            // Ước lượng 2 khóe miệng từ mắt & tâm miệng nếu FaceLandmarker chưa bắt được mặt xa
+            const eyeDx = kps[0][0] - kps[1][0];
+            const eyeDy = kps[0][1] - kps[1][1];
+            const leftMouth = [kps[3][0] - eyeDx * 0.42, kps[3][1] - eyeDy * 0.42];
+            const rightMouth = [kps[3][0] + eyeDx * 0.42, kps[3][1] + eyeDy * 0.42];
+            kps5 = [kps[1], kps[0], kps[2], leftMouth, rightMouth];
+          }
+          rawDets.push({
+            box: { x: bb.originX + ox, y: bb.originY + oy, width: bb.width, height: bb.height },
+            score: det.categories?.[0]?.score || 0.5,
+            detKps5: kps5
+          });
+        }
+      };
+
+      runOnSubCanvas(canvas, 0, 0);
+
+      if (tileScanToggle.checked && (canvas.width >= 600 || canvas.height >= 600)) {
+        const overlap = 0.22;
+        const tileW = Math.round(canvas.width * (0.5 + overlap / 2));
+        const tileH = Math.round(canvas.height * (0.5 + overlap / 2));
+        const offsets = [
+          { ox: 0, oy: 0 },
+          { ox: canvas.width - tileW, oy: 0 },
+          { ox: 0, oy: canvas.height - tileH },
+          { ox: canvas.width - tileW, oy: canvas.height - tileH }
+        ];
+        const tC = document.createElement("canvas");
+        tC.width = tileW;
+        tC.height = tileH;
+        const tCtx = tC.getContext("2d");
+
+        for (const { ox, oy } of offsets) {
+          tCtx.clearRect(0, 0, tileW, tileH);
+          tCtx.drawImage(canvas, ox, oy, tileW, tileH, 0, 0, tileW, tileH);
+          runOnSubCanvas(tC, ox, oy);
+        }
+        tC.width = 0; tC.height = 0;
+      }
+
+      rawDets.sort((a, b) => b.score - a.score);
+      const kept = [];
+      for (const d of rawDets) {
+        if (!kept.some(k => boxIoU(k.box, d.box) > 0.40)) {
+          kept.push(d);
+        }
+      }
+      return kept;
+    }
+
+    function cropDisplaySquare(sourceCanvas, box, outSize = 240) {
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+      const side = Math.max(box.width, box.height) * 1.24;
+      const x1 = Math.max(0, Math.round(cx - side / 2));
+      const y1 = Math.max(0, Math.round(cy - side / 2));
+      const x2 = Math.min(sourceCanvas.width, Math.round(cx + side / 2));
+      const y2 = Math.min(sourceCanvas.height, Math.round(cy + side / 2));
+      const w = Math.max(1, x2 - x1);
+      const h = Math.max(1, y2 - y1);
+
+      const out = document.createElement("canvas");
+      out.width = outSize;
+      out.height = outSize;
+      const ctx = out.getContext("2d");
+      ctx.fillStyle = "#18202c";
+      ctx.fillRect(0, 0, outSize, outSize);
+      const scale = Math.min(outSize / w, outSize / h);
+      const dw = Math.round(w * scale);
+      const dh = Math.round(h * scale);
+      ctx.drawImage(sourceCanvas, x1, y1, w, h, Math.floor((outSize - dw) / 2), Math.floor((outSize - dh) / 2), dw, dh);
+      const url = out.toDataURL("image/jpeg", 0.92);
+      out.width = 0; out.height = 0;
+      return url;
+    }
+
+    function renderOriginalsRoll() {
+      if (!fileRecords.length) {
+        originalsRoll.innerHTML = `<span style="font-size:11px;color:var(--muted);">Chưa có ảnh gốc</span>`;
+        return;
+      }
+      originalsRoll.innerHTML = "";
+      fileRecords.forEach((item, idx) => {
+        const div = document.createElement("div");
+        div.className = "orig-thumb" + (item.keptCount === 0 ? " zero-face" : "");
+        div.innerHTML = `<img src="${item.thumbUrl}" /><span class="orig-idx">${idx + 1}</span>`;
+        div.onclick = () => {
+          detailImg.src = item.fullUrl;
+          detailInfo.textContent = `Ảnh #${idx + 1}: ${item.name} · Dò: ${item.detectedCount} · Giữ: ${item.keptCount} · Chưa chắc: ${item.unsureCount}`;
+          detailActions.style.display = "none";
+          detailModal.style.display = "flex";
+        };
+        originalsRoll.appendChild(div);
+      });
+    }
+
+    function renderAuditTable() {
+      auditBody.innerHTML = "";
+      fileRecords.forEach((r, idx) => {
+        const tr = document.createElement("tr");
+        const stHtml = r.status === "Lỗi"
+          ? `<span class="badge-zero">Lỗi</span>`
+          : r.keptCount === 0
+            ? `<span class="badge-zero">0 mặt</span>`
+            : `<span class="badge-ok">OK</span>`;
+        tr.innerHTML = `
+          <td>#${idx + 1} ${escHtml(r.name)}</td>
+          <td>${r.detectedCount}</td>
+          <td>${r.keptCount}</td>
+          <td>${r.unsureCount}</td>
+          <td>${stHtml}</td>
+        `;
+        auditBody.appendChild(tr);
+      });
+    }
+
+    // --- Quy trình 6 bước hoàn chỉnh cho ảnh mới ---
+    async function processFilesIncremental(files) {
+      addPhotosBtn.disabled = true;
+      try {
+        const queue = files.filter(f => !processedFileKeys.has(`${f.name}_${f.size}_${f.lastModified}`));
+        if (!queue.length) {
+          setStatus("Tất cả ảnh đã được quét trước đó.");
+          return;
+        }
+
+        const newlyExtractedFaces = [];
+
+        for (let i = 0; i < queue.length; i++) {
+          const file = queue[i];
+          const fileKey = `${file.name}_${file.size}_${file.lastModified}`;
+          setStatus(`Đang quét ảnh ${i + 1}/${queue.length} (MediaPipe + Model 1)...`);
+          await new Promise(r => setTimeout(r, 10));
+
+          let rec = fileRecords.find(r => r.key === fileKey);
+          if (!rec) {
+            rec = { key: fileKey, file, name: file.name, thumbUrl: "", fullUrl: "", detectedCount: 0, keptCount: 0, unsureCount: 0, status: "Đang quét" };
+            fileRecords.push(rec);
+          } else {
+            rec.detectedCount = 0; rec.keptCount = 0; rec.unsureCount = 0;
+          }
+
+          try {
+            // Bước 1: Nạp & chuẩn hóa ảnh
+            const canvas = await fileToCanvas(file, 1800);
+            const baseName = file.name.replace(/\.[^.]+$/, "");
+            rec.thumbUrl = makeThumbUrl(canvas, 84);
+            rec.fullUrl = canvas.toDataURL("image/jpeg", 0.85);
+
+            // Bước 2: Dò mặt toàn ảnh + lát 2x2 + NMS
+            const detections = detectFacesMediaPipeTiles(canvas);
+            rec.detectedCount = detections.length;
+
+            // Bước 3: MediaPipe FaceLandmarker (478 điểm 3D + Pose)
+            const lmRes = faceLandmarker.detect(canvas);
+            const lmEntries = [];
+            if (lmRes && lmRes.faceLandmarks) {
+              lmRes.faceLandmarks.forEach((lms, k) => {
+                let minX = 1, minY = 1, maxX = 0, maxY = 0;
+                for (const pt of lms) {
+                  if (pt.x < minX) minX = pt.x;
+                  if (pt.y < minY) minY = pt.y;
+                  if (pt.x > maxX) maxX = pt.x;
+                  if (pt.y > maxY) maxY = pt.y;
+                }
+                const pose = lmRes.facialTransformationMatrixes?.[k]
+                  ? estimatePoseFromMatrix(lmRes.facialTransformationMatrixes[k].data)
+                  : { yaw: 0, pitch: 0 };
+                lmEntries.push({
+                  cx: ((minX + maxX) / 2) * canvas.width,
+                  cy: ((minY + maxY) / 2) * canvas.height,
+                  pts5: extract5PointsFrom478(lms, canvas.width, canvas.height),
+                  yaw: pose.yaw,
+                  pitch: pose.pitch
+                });
+              });
+            }
+
+            for (let idx = 0; idx < detections.length; idx++) {
+              const det = detections[idx];
+              const { box, score, detKps5 } = det;
+              const cx = box.x + box.width / 2;
+              const cy = box.y + box.height / 2;
+
+              // Khớp landmark 478 điểm gần nhất với bbox
+              let matchedLm = null;
+              let bestD = Infinity;
+              for (const entry of lmEntries) {
+                const d = Math.hypot(entry.cx - cx, entry.cy - cy);
+                if (d < bestD && d < Math.max(box.width, box.height) * 0.65) {
+                  bestD = d;
+                  matchedLm = entry;
+                }
+              }
+
+              const pts5 = matchedLm?.pts5 || detKps5;
+              const yaw = matchedLm?.yaw ?? 0;
+
+              // Bước 4: Căn chỉnh (Align) về khung chuẩn 112x112
+              const alignedCanvas112 = alignFace112(canvas, pts5, box);
+              const alignedUrl = alignedCanvas112.toDataURL("image/jpeg", 0.92);
+              const displayUrl = cropDisplaySquare(canvas, box, 240);
+
+              // Lọc chất lượng mặt (FIQA cơ bản: kích thước, độ nét Laplacian, độ sáng)
+              const qual = assessFaceQuality112(alignedCanvas112);
+
+              // Bước 5: Trích xuất Embedding Model 1 (ArcFace ONNX)
+              let embM1 = null;
+              let normM1 = 0;
+              if (sessionM1) {
+                const outM1 = await extractOnnxEmbedding(sessionM1, alignedCanvas112);
+                if (outM1) {
+                  embM1 = outM1.vec;
+                  normM1 = outM1.rawNorm;
+                }
+              }
+
+              alignedCanvas112.width = 0;
+              alignedCanvas112.height = 0;
+
+              let forcedUnsureReason = "";
+              const minSharp = parseFloat(minSharpnessEl.value);
+              if (!embM1) {
+                forcedUnsureReason = "Chưa có Model 1";
+              } else if (box.width < 22 || box.height < 22) {
+                forcedUnsureReason = `Quá nhỏ (${Math.round(box.width)}px)`;
+              } else if (qual.sharpness < minSharp) {
+                forcedUnsureReason = `Mờ (nét ${qual.sharpness} < ${minSharp})`;
+              } else if (qual.brightness < 28 || qual.brightness > 235) {
+                forcedUnsureReason = `Sáng kém (${qual.brightness})`;
+              }
+
+              idSeq++;
+              const faceObj = {
+                id: `f_${idSeq}`,
+                url: displayUrl,
+                alignedUrl,
+                fileName: `${baseName}_m${idx + 1}.jpg`,
+                embM1,
+                embM2: null, // Chưa chạy Model 2 cho tới khi bấm Thử lại
+                normM1,
+                normM2: 0,
+                sharpness: qual.sharpness,
+                brightness: qual.brightness,
+                score,
+                yaw,
+                strikes: 0,
+                excludedIds: new Set(),
+                forcedUnsureReason,
+                reason: forcedUnsureReason,
+                manualGroupId: null,
+                mergedToSavedDB: false
+              };
+
+              allFaces.push(faceObj);
+              newlyExtractedFaces.push(faceObj);
+
+              if (forcedUnsureReason || yaw > parseFloat(maxYawEl.value)) {
+                rec.unsureCount++;
+              } else {
+                rec.keptCount++;
+              }
+            }
+
+            rec.status = "OK";
+            processedFileKeys.add(fileKey);
+            canvas.width = 0; canvas.height = 0;
+          } catch (err) {
+            rec.status = "Lỗi";
+            console.warn("Lỗi quét ảnh:", file.name, err);
+          }
+
+          renderOriginalsRoll();
+          renderAuditTable();
+        }
+
+        // Bước 6: Gom nhóm & đối chiếu DB
+        assignIncrementalFaces(newlyExtractedFaces);
+        updateSummaryStatus();
+        queueDatabaseMatchProposals();
+      } finally {
+        addPhotosBtn.disabled = false;
+      }
+    }
+
+    function getNextAutoGroupName(usedNamesSet) {
+      let n = 1;
+      while (true) {
+        const candidate = `N${n}`;
+        if (!usedNamesSet.has(candidate.toLowerCase())) {
+          usedNamesSet.add(candidate.toLowerCase());
+          return candidate;
+        }
+        n++;
+      }
+    }
+
+    function assignIncrementalFaces(newFaces) {
+      const simTh = parseFloat(simThresholdEl.value) / 100;
+      const maxYaw = parseFloat(maxYawEl.value);
+      const usedNames = new Set([
+        ...people.map(p => p.name.toLowerCase()),
+        ...savedDBPeople.map(d => d.name.toLowerCase())
+      ]);
+
+      for (const f of newFaces) {
+        const emb = getActiveEmb(f);
+        if (f.forcedUnsureReason || !emb) {
+          f.reason = f.forcedUnsureReason || "Thiếu embedding";
+          unsureFaces.push(f);
+          continue;
+        }
+        if (f.yaw > maxYaw) {
+          f.reason = `Nghiêng ~${Math.round(f.yaw)}°`;
+          unsureFaces.push(f);
+          continue;
+        }
+
+        let bestIdx = -1;
+        let bestSim = simTh;
+        for (let i = 0; i < people.length; i++) {
+          if (!people[i].centroid) continue;
+          const s = similarityToPerson(emb, people[i]);
+          if (s >= simTh && s > bestSim) {
+            bestSim = s;
+            bestIdx = i;
+          }
+        }
+
+        if (bestIdx >= 0) {
+          people[bestIdx].faces.push(f);
+          people[bestIdx].embs.push(emb);
+          people[bestIdx].centroid = calcNormalizedCentroid(people[bestIdx].embs);
+        } else {
+          people.push({
+            id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+            name: getNextAutoGroupName(usedNames),
+            centroid: emb,
+            embs: [emb],
+            faces: [f],
+            isManual: false
+          });
+        }
+      }
+
+      renderWorkingUI();
+    }
+
+    function reclusterPreservingManual() {
+      const simTh = parseFloat(simThresholdEl.value) / 100;
+      const maxYaw = parseFloat(maxYawEl.value);
+      const minSharp = parseFloat(minSharpnessEl.value);
+
+      const preservedGroups = [];
+      for (const p of people) {
+        const manualFaces = p.faces.filter(f => f.manualGroupId === p.id && !f.mergedToSavedDB);
+        const isNamedCustom = !/^N\d+$/.test(p.name) || p.isManual;
+        if (manualFaces.length > 0 || isNamedCustom) {
+          const embs = manualFaces.map(x => getActiveEmb(x)).filter(Boolean);
+          preservedGroups.push({
+            id: p.id,
+            name: p.name,
+            faces: manualFaces,
+            embs,
+            centroid: embs.length ? calcNormalizedCentroid(embs) : null,
+            isManual: p.isManual
+          });
+        }
+      }
+
+      people = preservedGroups;
+      unsureFaces = [];
+
+      const usedNames = new Set([
+        ...people.map(p => p.name.toLowerCase()),
+        ...savedDBPeople.map(d => d.name.toLowerCase())
+      ]);
+
+      const autoCandidates = [];
+      for (const f of allFaces) {
+        if (f.mergedToSavedDB) continue;
+        if (f.manualGroupId && people.some(p => p.id === f.manualGroupId)) continue;
+        f.manualGroupId = null;
+
+        const emb = getActiveEmb(f);
+        if (!emb) {
+          f.reason = "Thiếu embedding";
+          unsureFaces.push(f);
+          continue;
+        }
+        if (f.strikes >= 3) {
+          f.reason = "Đã xoá 3 lần";
+          unsureFaces.push(f);
+          continue;
+        }
+        if (f.sharpness < minSharp) {
+          f.reason = `Mờ (nét ${f.sharpness} < ${minSharp})`;
+          unsureFaces.push(f);
+          continue;
+        }
+        if (f.yaw > maxYaw) {
+          f.reason = `Nghiêng ~${Math.round(f.yaw)}°`;
+          unsureFaces.push(f);
+          continue;
+        }
+        autoCandidates.push(f);
+      }
+
+      autoCandidates.sort((a, b) => (b.sharpness * b.score) - (a.sharpness * a.score));
+
+      for (const f of autoCandidates) {
+        const emb = getActiveEmb(f);
+        let bestIdx = -1;
+        let bestSim = simTh;
+        for (let i = 0; i < people.length; i++) {
+          if (f.excludedIds.has(people[i].id) || !people[i].centroid) continue;
+          const s = similarityToPerson(emb, people[i]);
+          if (s >= simTh && s > bestSim) {
+            bestSim = s;
+            bestIdx = i;
+          }
+        }
+
+        if (bestIdx >= 0) {
+          people[bestIdx].faces.push(f);
+          people[bestIdx].embs.push(emb);
+          people[bestIdx].centroid = calcNormalizedCentroid(people[bestIdx].embs);
+        } else {
+          people.push({
+            id: `p_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            name: getNextAutoGroupName(usedNames),
+            centroid: emb,
+            embs: [emb],
+            faces: [f],
+            isManual: false
+          });
+        }
+      }
+
+      people.sort((a, b) => b.faces.length - a.faces.length);
+      renderWorkingUI();
+      updateSummaryStatus();
+    }
+
+    // --- Bấm "Thử lại": chỉ tại đây mới tải Model 2 (AdaFace) và chạy lại cho các mặt Chưa chắc / toàn bộ ---
+    retryUnsureBtn.addEventListener("click", async () => {
+      if (!allFaces.length) return;
+      retryUnsureBtn.disabled = true;
+
+      try {
+        const loaded = await ensureModel2Loaded();
+        if (!loaded) return;
+
+        setStatus("Đang trích xuất đặc trưng bằng Model 2 (AdaFace)...");
+        let countM2 = 0;
+
+        // Trích xuất embedding Model 2 từ ảnh đã căn chỉnh 112x112 cho các mặt chưa lưu DB
+        for (const f of allFaces) {
+          if (f.mergedToSavedDB || f.embM2) continue;
+          const img = await new Promise((res, rej) => {
+            const im = new Image();
+            im.onload = () => res(im);
+            im.onerror = rej;
+            im.src = f.alignedUrl;
+          });
+          const c112 = document.createElement("canvas");
+          c112.width = 112;
+          c112.height = 112;
+          c112.getContext("2d").drawImage(img, 0, 0, 112, 112);
+
+          const outM2 = await extractOnnxEmbedding(sessionM2, c112);
+          c112.width = 0; c112.height = 0;
+
+          if (outM2) {
+            f.embM2 = outM2.vec;
+            f.normM2 = outM2.rawNorm;
+            f.forcedUnsureReason = "";
+            countM2++;
+          }
+        }
+
+        // Chuyển không gian vector sang Model 2 (AdaFace) và nới nhẹ ngưỡng mờ vì AdaFace chịu mờ tốt hơn
+        activeSpace = "m2";
+        activeModelPill.textContent = "M2: AdaFace";
+        if (parseFloat(minSharpnessEl.value) > 8) {
+          minSharpnessEl.value = 8;
+          sharpLabel.textContent = "8";
+        }
+
+        reclusterPreservingManual();
+        setStatus(`Đã chạy Model 2 (AdaFace) cho ${countM2} mặt · ${people.length} nhóm · ${unsureFaces.length} chưa chắc`);
+      } catch (err) {
+        setStatus("Lỗi chạy Model 2: " + err.message, true);
+      } finally {
+        retryUnsureBtn.disabled = false;
+      }
+    });
+
+    function queueDatabaseMatchProposals() {
+      if (!savedDBPeople.length) return;
+      const dbMatchTh = Math.max(0.42, (parseFloat(simThresholdEl.value) / 100) - 0.03);
+      dbMatchProposals = [];
+
+      for (const p of people) {
+        if (!p.centroid || !p.faces.length) continue;
+        let bestDb = null;
+        let bestSim = dbMatchTh;
+        for (const dbP of savedDBPeople) {
+          if (dbP.space && dbP.space !== activeSpace) continue;
+          const s = similarityToPerson(p.centroid, dbP);
+          if (s >= dbMatchTh && s > bestSim) {
+            bestSim = s;
+            bestDb = dbP;
+          }
+        }
+        if (bestDb) {
+          dbMatchProposals.push({ workingPersonId: p.id, dbPersonId: bestDb.id, sim: bestSim });
+        }
+      }
+
+      if (dbMatchProposals.length > 0) showNextDbProposal();
+    }
+
+    function showNextDbProposal() {
+      if (!dbMatchProposals.length) return;
+      const prop = dbMatchProposals.shift();
+      const wP = people.find(p => p.id === prop.workingPersonId);
+      const dbP = savedDBPeople.find(p => p.id === prop.dbPersonId);
+      if (!wP || !dbP || !wP.faces.length) {
+        showNextDbProposal();
+        return;
+      }
+
+      const pct = Math.round(prop.sim * 100);
+      pendingModalAction = { mode: "merge_to_db", workingPersonId: wP.id, dbPersonId: dbP.id };
+
+      cmpTitle.textContent = "Trùng người đã lưu?";
+      cmpSrcImg.src = wP.faces[0]?.url || "";
+      cmpSrcLabel.textContent = `${wP.name} (${wP.faces.length})`;
+      cmpDstImg.src = dbP.faces[0]?.url || "";
+      cmpDstLabel.textContent = `${dbP.name} (${dbP.faces.length})`;
+      cmpSimPct.textContent = `${pct}%`;
+      cmpDesc.textContent = `${wP.name} ≈ ${dbP.name} (${pct}%). Gộp?`;
+      confirmMoveModal.style.display = "flex";
+    }
+
+    function updateSummaryStatus() {
+      setStatus(`${allFaces.length} mặt · ${people.length} nhóm · ${unsureFaces.length} chưa chắc (${activeSpace === "m2" ? "AdaFace" : "ArcFace"})`);
+    }
+
+    async function confirmSavePersonToBottomDB(personIdx) {
+      const p = people[personIdx];
+      if (!p || !p.faces.length) return;
+
+      const cleanName = p.name.trim();
+      let existingDb = savedDBPeople.find(d => d.name.toLowerCase() === cleanName.toLowerCase() && d.space === activeSpace);
+
+      try {
+        if (existingDb) {
+          for (const f of p.faces) {
+            f.mergedToSavedDB = true;
+            existingDb.faces.push({ id: f.id, url: f.url, alignedUrl: f.alignedUrl, fileName: f.fileName });
+            const e = getActiveEmb(f);
+            if (e) existingDb.embs.push(e);
+          }
+          existingDb.centroid = calcNormalizedCentroid(existingDb.embs);
+          await persistSavedPerson(existingDb);
+        } else {
+          const newDbPerson = {
+            id: `db_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+            name: cleanName,
+            space: activeSpace,
+            embs: p.faces.map(f => getActiveEmb(f)).filter(Boolean),
+            faces: p.faces.map(f => ({ id: f.id, url: f.url, alignedUrl: f.alignedUrl, fileName: f.fileName }))
+          };
+          p.faces.forEach(f => { f.mergedToSavedDB = true; });
+          await persistSavedPerson(newDbPerson);
+        }
+
+        people.splice(personIdx, 1);
+        renderWorkingUI();
+        updateSummaryStatus();
+      } catch (err) {
+        setStatus("Lỗi lưu DB: " + err.message, true);
+      }
+    }
+
+    window.proposeReassignOnDelete = function(personIdx, faceId) {
+      const srcPerson = people[personIdx];
+      if (!srcPerson) return;
+      const fIdx = srcPerson.faces.findIndex(x => x.id === faceId);
+      if (fIdx < 0) return;
+
+      const face = srcPerson.faces[fIdx];
+      const nextStrikes = (face.strikes || 0) + 1;
+      const emb = getActiveEmb(face);
+
+      if (nextStrikes >= 3) {
+        srcPerson.faces.splice(fIdx, 1);
+        face.strikes = 3;
+        face.manualGroupId = null;
+        face.excludedIds.add(srcPerson.id);
+        face.reason = "Đã xoá 3 lần";
+        recalcWorkingGroup(personIdx);
+        unsureFaces.push(face);
+        renderWorkingUI();
+        updateSummaryStatus();
+        return;
+      }
+
+      let bestCandidate = null;
+      let bestSim = -1;
+
+      for (let i = 0; i < people.length; i++) {
+        if (i === personIdx) continue;
+        if (face.excludedIds.has(people[i].id) || !people[i].centroid) continue;
+        const s = similarityToPerson(emb, people[i]);
+        if (s > bestSim) {
+          bestSim = s;
+          bestCandidate = { isDB: false, person: people[i] };
+        }
+      }
+      for (const dbP of savedDBPeople) {
+        if (face.excludedIds.has(dbP.id) || (dbP.space && dbP.space !== activeSpace)) continue;
+        const s = similarityToPerson(emb, dbP);
+        if (s > bestSim) {
+          bestSim = s;
+          bestCandidate = { isDB: true, person: dbP };
+        }
+      }
+
+      if (!bestCandidate) {
+        srcPerson.faces.splice(fIdx, 1);
+        face.strikes = nextStrikes;
+        face.manualGroupId = null;
+        face.excludedIds.add(srcPerson.id);
+        face.reason = `Xoá ${face.strikes}/3`;
+        recalcWorkingGroup(personIdx);
+        unsureFaces.push(face);
+        renderWorkingUI();
+        updateSummaryStatus();
+        return;
+      }
+
+      const pct = Math.max(0, Math.round(bestSim * 100));
+      pendingModalAction = {
+        mode: "delete_reassign",
+        srcPersonId: srcPerson.id,
+        dstPersonId: bestCandidate.person.id,
+        dstIsDB: bestCandidate.isDB,
+        faceId: face.id
+      };
+
+      cmpTitle.textContent = "Đề xuất chuyển nhóm";
+      cmpSrcImg.src = face.url;
+      cmpSrcLabel.textContent = `${srcPerson.name} (${nextStrikes}/3)`;
+      cmpDstImg.src = bestCandidate.person.faces[0]?.url || "";
+      cmpDstLabel.textContent = `${bestCandidate.person.name}`;
+      cmpSimPct.textContent = `${pct}%`;
+      cmpDesc.textContent = `Giống ${bestCandidate.person.name} (${pct}%). Chuyển sang?`;
+      confirmMoveModal.style.display = "flex";
+    };
+
+    window.closeConfirmModal = function() {
+      confirmMoveModal.style.display = "none";
+      pendingModalAction = null;
+      if (dbMatchProposals.length > 0) setTimeout(showNextDbProposal, 120);
+    };
+
+    cmpYesBtn.addEventListener("click", async () => {
+      if (!pendingModalAction) return;
+      const act = pendingModalAction;
+
+      if (act.mode === "merge_to_db") {
+        const wIdx = people.findIndex(p => p.id === act.workingPersonId);
+        const dbP = savedDBPeople.find(p => p.id === act.dbPersonId);
+        if (wIdx >= 0 && dbP) {
+          const wP = people[wIdx];
+          for (const f of wP.faces) {
+            f.mergedToSavedDB = true;
+            dbP.faces.push({ id: f.id, url: f.url, alignedUrl: f.alignedUrl, fileName: f.fileName });
+            const e = getActiveEmb(f);
+            if (e) dbP.embs.push(e);
+          }
+          dbP.centroid = calcNormalizedCentroid(dbP.embs);
+          await persistSavedPerson(dbP);
+          people.splice(wIdx, 1);
+          renderWorkingUI();
+          updateSummaryStatus();
+        }
+        closeConfirmModal();
+        return;
+      }
+
+      if (act.mode === "delete_reassign") {
+        const srcIdx = people.findIndex(p => p.id === act.srcPersonId);
+        if (srcIdx < 0) { closeConfirmModal(); return; }
+        const fIdx = people[srcIdx].faces.findIndex(x => x.id === act.faceId);
+        if (fIdx < 0) { closeConfirmModal(); return; }
+
+        const [face] = people[srcIdx].faces.splice(fIdx, 1);
+        face.strikes = (face.strikes || 0) + 1;
+        face.excludedIds.add(people[srcIdx].id);
+        recalcWorkingGroup(srcIdx);
+        const emb = getActiveEmb(face);
+
+        if (act.dstIsDB) {
+          const dbP = savedDBPeople.find(p => p.id === act.dstPersonId);
+          if (dbP) {
+            face.mergedToSavedDB = true;
+            dbP.faces.push({ id: face.id, url: face.url, alignedUrl: face.alignedUrl, fileName: face.fileName });
+            if (emb) dbP.embs.push(emb);
+            dbP.centroid = calcNormalizedCentroid(dbP.embs);
+            await persistSavedPerson(dbP);
+          }
+        } else {
+          const dstIdx = people.findIndex(p => p.id === act.dstPersonId);
+          if (dstIdx >= 0) {
+            face.manualGroupId = people[dstIdx].id;
+            people[dstIdx].faces.push(face);
+            if (emb) people[dstIdx].embs.push(emb);
+            if (people[dstIdx].embs.length) people[dstIdx].centroid = calcNormalizedCentroid(people[dstIdx].embs);
+          }
+        }
+
+        renderWorkingUI();
+        updateSummaryStatus();
+        closeConfirmModal();
+      }
+    });
+
+    cmpNoBtn.addEventListener("click", () => {
+      if (!pendingModalAction) return;
+      const act = pendingModalAction;
+
+      if (act.mode === "merge_to_db") { closeConfirmModal(); return; }
+
+      if (act.mode === "delete_reassign") {
+        const srcIdx = people.findIndex(p => p.id === act.srcPersonId);
+        if (srcIdx < 0) { closeConfirmModal(); return; }
+        const fIdx = people[srcIdx].faces.findIndex(x => x.id === act.faceId);
+        if (fIdx < 0) { closeConfirmModal(); return; }
+
+        const [face] = people[srcIdx].faces.splice(fIdx, 1);
+        face.strikes = (face.strikes || 0) + 1;
+        face.excludedIds.add(people[srcIdx].id);
+        face.excludedIds.add(act.dstPersonId);
+        face.manualGroupId = null;
+        recalcWorkingGroup(srcIdx);
+
+        if (face.strikes >= 3) {
+          face.reason = "Đã xoá 3 lần";
+          unsureFaces.push(face);
+        } else {
+          const emb = getActiveEmb(face);
+          let nextIdx = -1;
+          let nextSim = 0.36;
+          for (let i = 0; i < people.length; i++) {
+            if (face.excludedIds.has(people[i].id) || !people[i].centroid) continue;
+            const s = similarityToPerson(emb, people[i]);
+            if (s > nextSim) { nextSim = s; nextIdx = i; }
+          }
+          if (nextIdx >= 0) {
+            people[nextIdx].faces.push(face);
+            people[nextIdx].embs.push(emb);
+            people[nextIdx].centroid = calcNormalizedCentroid(people[nextIdx].embs);
+          } else {
+            face.reason = `Xoá ${face.strikes}/3`;
+            unsureFaces.push(face);
+          }
+        }
+
+        renderWorkingUI();
+        updateSummaryStatus();
+        closeConfirmModal();
+      }
+    });
+
+    function recalcWorkingGroup(idx) {
+      const p = people[idx];
+      if (!p) return;
+      if (p.faces.length === 0 && !p.isManual) {
+        people.splice(idx, 1);
+      } else {
+        p.embs = p.faces.map(x => getActiveEmb(x)).filter(Boolean);
+        p.centroid = p.embs.length ? calcNormalizedCentroid(p.embs) : null;
+      }
+    }
+
+    function mergeWorkingPerson(fromIdx, toIdx) {
+      if (fromIdx === toIdx || !people[fromIdx] || !people[toIdx]) return;
+      const src = people[fromIdx];
+      const dst = people[toIdx];
+      const seen = new Set(dst.faces.map(f => f.id));
+      for (const f of src.faces) {
+        if (!seen.has(f.id)) {
+          seen.add(f.id);
+          f.manualGroupId = dst.id;
+          dst.faces.push(f);
+          const e = getActiveEmb(f);
+          if (e) dst.embs.push(e);
+        }
+      }
+      dst.isManual = true;
+      if (dst.embs.length) dst.centroid = calcNormalizedCentroid(dst.embs);
+      people.splice(fromIdx, 1);
+      renderWorkingUI();
+      updateSummaryStatus();
+    }
+
+    function renderWorkingUI() {
+      unsureBadge.textContent = unsureFaces.length;
+      unsureGrid.innerHTML = "";
+      unsureFaces.forEach(f => {
+        const div = document.createElement("div");
+        div.className = "unsure-thumb";
+        div.title = f.reason || "";
+        div.innerHTML = `
+          <img src="${f.url}" />
+          ${f.strikes > 0 ? `<span class="strike-tag">${f.strikes}/3</span>` : ""}
+        `;
+        div.querySelector("img").onclick = () => openDetailModal("unsure", -1, f.id);
+        unsureGrid.appendChild(div);
+      });
+
+      peopleGrid.innerHTML = "";
+      people.forEach((p, idx) => {
+        const card = document.createElement("div");
+        card.className = "person-card";
+
+        card.innerHTML = `
+          <div class="person-head">
+            <img class="avatar" src="${p.faces[0]?.url || ""}" />
+            <input class="name-compact" value="${escHtml(p.name)}" />
+            <button class="confirm-btn">Lưu</button>
+            <span class="cnt-pill">${p.faces.length}</span>
+          </div>
+          <div class="faces-subgrid"></div>
+        `;
+
+        card.querySelector(".name-compact").addEventListener("change", (e) => {
+          p.name = e.target.value.trim() || `N${idx + 1}`;
+          p.isManual = true;
+          renderWorkingUI();
+        });
+
+        card.querySelector(".confirm-btn").addEventListener("click", () => {
+          confirmSavePersonToBottomDB(idx);
+        });
+
+        const sub = card.querySelector(".faces-subgrid");
+        p.faces.forEach(f => {
+          const item = document.createElement("div");
+          item.className = "face-item";
+          item.innerHTML = `
+            <img src="${f.url}" />
+            <button class="del-x">×</button>
+            ${f.strikes > 0 ? `<span class="strike-tag">${f.strikes}/3</span>` : ""}
+          `;
+          item.querySelector("img").onclick = () => openDetailModal("person", idx, f.id);
+          item.querySelector(".del-x").onclick = (ev) => {
+            ev.stopPropagation();
+            window.proposeReassignOnDelete(idx, f.id);
+          };
+          sub.appendChild(item);
+        });
+
+        peopleGrid.appendChild(card);
+      });
+    }
+
+    function renderSavedDBSection() {
+      savedPeopleGrid.innerHTML = "";
+      if (!savedDBPeople.length) {
+        savedPeopleGrid.innerHTML = `<div style="font-size:11.5px;color:var(--muted);grid-column:1/-1;">Chưa có ai. Đặt tên rồi bấm Lưu.</div>`;
+        return;
+      }
+
+      savedDBPeople.forEach(dbP => {
+        const card = document.createElement("div");
+        card.className = "saved-card";
+        card.innerHTML = `
+          <div class="person-head">
+            <img class="avatar" src="${dbP.faces[0]?.url || ""}" style="border-color:var(--ok);" />
+            <strong style="font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(dbP.name)}</strong>
+            <span class="lock-badge">${dbP.faces.length}</span>
+          </div>
+          <div class="faces-subgrid"></div>
+        `;
+        const sub = card.querySelector(".faces-subgrid");
+        dbP.faces.forEach(f => {
+          const item = document.createElement("div");
+          item.className = "face-item";
+          item.innerHTML = `<img src="${f.url}" />`;
+          item.querySelector("img").onclick = () => {
+            detailImg.src = f.url;
+            detailInfo.textContent = `${dbP.name} · ${f.fileName}`;
+            detailActions.style.display = "none";
+            detailModal.style.display = "flex";
+          };
+          sub.appendChild(item);
+        });
+        savedPeopleGrid.appendChild(card);
+      });
+    }
+
+    window.openDetailModal = function(source, personIdx, faceId) {
+      const face = source === "person"
+        ? people[personIdx]?.faces.find(x => x.id === faceId)
+        : unsureFaces.find(x => x.id === faceId);
+      if (!face) return;
+
+      detailCtx = { source, personIdx, faceId };
+      detailImg.src = face.url;
+      detailActions.style.display = "flex";
+
+      let simText = "";
+      const emb = getActiveEmb(face);
+      if (source === "person" && people[personIdx]?.centroid && emb) {
+        const pct = Math.round(similarityToPerson(emb, people[personIdx]) * 100);
+        simText = ` · Khớp: ${pct}%`;
+      }
+      detailInfo.textContent = `${face.fileName} · Nghiêng ~${Math.round(face.yaw || 0)}° · Nét: ${face.sharpness}${simText}${face.reason ? " · " + face.reason : ""}`;
+
+      const workingOpts = people
+        .map((p, i) => (source === "person" && i === personIdx) ? "" : `<option value="w:${i}">${escHtml(p.name)} (${p.faces.length})</option>`)
+        .join("");
+      const dbOpts = savedDBPeople
+        .filter(dbP => !dbP.space || dbP.space === activeSpace)
+        .map(dbP => `<option value="db:${dbP.id}">[DB] ${escHtml(dbP.name)} (${dbP.faces.length})</option>`)
+        .join("");
+
+      moveTargetSelect.innerHTML = workingOpts + dbOpts;
+      detailModal.style.display = "flex";
+    };
+
+    window.closeDetailModal = function() {
+      detailModal.style.display = "none";
+      detailCtx = null;
+    };
+
+    moveTargetBtn.addEventListener("click", async () => {
+      if (!detailCtx) return;
+      const val = moveTargetSelect.value;
+      if (!val) return;
+
+      let face = null;
+      if (detailCtx.source === "person") {
+        const srcP = people[detailCtx.personIdx];
+        const i = srcP.faces.findIndex(x => x.id === detailCtx.faceId);
+        if (i >= 0) {
+          [face] = srcP.faces.splice(i, 1);
+          recalcWorkingGroup(detailCtx.personIdx);
+        }
+      } else {
+        const i = unsureFaces.findIndex(x => x.id === detailCtx.faceId);
+        if (i >= 0) [face] = unsureFaces.splice(i, 1);
+      }
+
+      if (face) {
+        const emb = getActiveEmb(face);
+        if (val.startsWith("db:")) {
+          const dbId = val.slice(3);
+          const dbP = savedDBPeople.find(d => d.id === dbId);
+          if (dbP) {
+            face.mergedToSavedDB = true;
+            dbP.faces.push({ id: face.id, url: face.url, alignedUrl: face.alignedUrl, fileName: face.fileName });
+            if (emb) dbP.embs.push(emb);
+            dbP.centroid = calcNormalizedCentroid(dbP.embs);
+            await persistSavedPerson(dbP);
+          }
+        } else if (val.startsWith("w:")) {
+          const targetIdx = parseInt(val.slice(2), 10);
+          if (people[targetIdx]) {
+            face.manualGroupId = people[targetIdx].id;
+            people[targetIdx].faces.push(face);
+            if (emb) people[targetIdx].embs.push(emb);
+            if (people[targetIdx].embs.length) people[targetIdx].centroid = calcNormalizedCentroid(people[targetIdx].embs);
+          }
+        }
+      }
+
+      closeDetailModal();
+      renderWorkingUI();
+      updateSummaryStatus();
+    });
+  </script>
+</body>
+</html>
